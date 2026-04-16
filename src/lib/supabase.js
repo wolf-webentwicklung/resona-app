@@ -159,15 +159,15 @@ export async function getRecentTraces(pairId, hours) {
   return data || [];
 }
 
-// ── Resonance Events: create ──
+// ── Resonance Events: create (via secure RPC — K6 fix) ──
 export async function createResonanceEvent(pairId, type, tone, triggerTraces, extraData) {
-  const { data, error } = await supabase.from('resonance_events').insert({
-    pair_id: pairId,
-    type,
-    tone,
-    trigger_traces: triggerTraces,
-    extra_data: extraData || null,
-  }).select().single();
+  const { data, error } = await supabase.rpc('create_resonance_event', {
+    p_pair_id: pairId,
+    p_type: type,
+    p_tone: tone,
+    p_trigger_traces: triggerTraces,
+    p_extra_data: extraData || null,
+  });
   if (error) throw error;
   return data;
 }
