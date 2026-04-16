@@ -129,13 +129,14 @@ export async function sendTrace(pairId, senderId, receiverId, path, tone) {
 
   if (error) throw error;
 
-  await supabase.from('artwork_contributions').insert({
+  const { error: artError } = await supabase.from('artwork_contributions').insert({
     pair_id: pairId,
     trace_id: data.id,
     sender_id: senderId,
     path_data: { path },
     tone: tone,
   });
+  if (artError) console.error('Failed to save artwork contribution:', artError);
 
   return data;
 }
@@ -240,13 +241,14 @@ export async function sendStillHere(pairId, userId) {
   return await createResonanceEvent(pairId, 'still_here', null, [], { sender_id: userId });
 }
 
-// ── Still Here: get last still_here event for cooldown ──
-export async function getLastStillHere(pairId) {
+// ── Still Here: get last still_here event sent by this user for cooldown ──
+export async function getLastStillHere(pairId, userId) {
   const { data } = await supabase
     .from('resonance_events')
     .select('*')
     .eq('pair_id', pairId)
     .eq('type', 'still_here')
+    .filter('extra_data->>sender_id', 'eq', userId)
     .order('triggered_at', { ascending: false })
     .limit(1)
     .single();
@@ -258,13 +260,14 @@ export async function sendNudge(pairId, userId) {
   return await createResonanceEvent(pairId, 'nudge', null, [], { sender_id: userId });
 }
 
-// ── Nudge: get last nudge for this pair ──
-export async function getLastNudge(pairId) {
+// ── Nudge: get last nudge sent by this user for this pair ──
+export async function getLastNudge(pairId, userId) {
   const { data } = await supabase
     .from('resonance_events')
     .select('*')
     .eq('pair_id', pairId)
     .eq('type', 'nudge')
+    .filter('extra_data->>sender_id', 'eq', userId)
     .order('triggered_at', { ascending: false })
     .limit(1)
     .single();
@@ -448,5 +451,5 @@ export async function saveSharedCanvas(pairId, userId, strokes, tone) {
     path_data: { path: strokes },
     tone: tone || 'nearness',
   });
-  if (error) console.error('Failed to save shared canvas:', error);
+  if (error) throw error;
 }

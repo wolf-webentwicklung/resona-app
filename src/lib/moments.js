@@ -7,23 +7,7 @@
 // ══════════════════════════════════════════
 
 import { getRecentTraces, getLastResonanceEvent, createResonanceEvent } from './supabase.js';
-import { MOMENT_COOLDOWN_HOURS, MOMENT_PRIORITY } from './constants.js';
-
-function analyzeGesture(path) {
-  if (!path || path.length < 2) return { intensity: 0, dirs: 0, duration: 0 };
-  var dur = path[path.length - 1].t - path[0].t, td = 0, dc = 0;
-  for (var i = 1; i < path.length; i++) {
-    var dx = path[i].x - path[i-1].x, dy = path[i].y - path[i-1].y;
-    td += Math.sqrt(dx*dx + dy*dy);
-    if (i > 1) {
-      var a = path[i-1].x - path[i-2].x, b = path[i-1].y - path[i-2].y;
-      if (Math.abs(a * dy - b * dx) > 0.0006) dc++;
-    }
-  }
-  var spd = dur > 0 ? td / (dur / 1000) : 0;
-  var intensity = Math.min(1, Math.max(0, (dur/3000)*0.3 + (dc/10)*0.4 + spd*0.3));
-  return { intensity, dirs: dc, duration: dur };
-}
+import { MOMENT_COOLDOWN_HOURS, MOMENT_PRIORITY, analyzeGesture } from './constants.js';
 
 // ── Twin Connection ──
 // Both users must have sent within the last 15 MINUTES
@@ -48,7 +32,7 @@ function checkAmplifiedReveal(trace) {
   if (!trace || !trace.gesture_data || !trace.gesture_data.path) return null;
   var analysis = analyzeGesture(trace.gesture_data.path);
 
-  if (analysis.duration > 3000 && analysis.dirs > 8 && analysis.intensity > 0.65) {
+  if (analysis.duration > 3000 && analysis.dirChanges > 8 && analysis.intensity > 0.65) {
     return {
       type: 'amplified_reveal',
       tone: trace.emotional_tone,

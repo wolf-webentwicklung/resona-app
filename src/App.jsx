@@ -294,8 +294,11 @@ function Onboarding({ onDone }) {
   var advance = function() {
     setAl(0);
     setTimeout(function() {
-      if (step < steps.length - 1) setStep(step + 1);
-      else onDone();
+      setStep(function(s) {
+        if (s < steps.length - 1) return s + 1;
+        onDone();
+        return s;
+      });
     }, 300);
   };
 
@@ -483,9 +486,14 @@ export default function App() {
     setAppPhase("space");
   }, [user]);
   var handleDissolve = useCallback(async function() {
-    await dissolvePair();
-    setPair(null);
-    setAppPhase("welcome");
+    try {
+      await dissolvePair();
+      setPair(null);
+      setAppPhase("welcome");
+    } catch (e) {
+      console.error("Dissolve error:", e);
+      setInitError("Failed to dissolve connection. Please try again.");
+    }
   }, []);
 
   if (appPhase === "loading") {
@@ -598,6 +606,9 @@ function ResonanceSpace({ user, pair, onDissolve }) {
   var myStrokesR = useRef([]);
   var canvasChannelR = useRef(null);
 
+  var sharedPhaseR = useRef(null);
+  useEffect(function() { sharedPhaseR.current = sharedPhase; }, [sharedPhase]);
+
   var cvRef = useRef(null);
   var nf1 = useRef(makeNoise()), nf2 = useRef(makeNoise()), nf3 = useRef(makeNoise());
   var timeR = useRef(0), afR = useRef(null);
@@ -633,16 +644,18 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       try {
         var art = await getArtwork(pair.id);
         if (art.length > 0) {
-          setContribs(art.map(function(a) { return { tone: a.tone, path: a.path_data.path }; }));
+          setContribs(art.filter(function(a) { return a.path_data && a.path_data.path; }).map(function(a) { return { tone: a.tone, path: a.path_data.path }; }));
           setRecTones(art.slice(-5).map(function(a) { return a.tone; }).reverse());
           setOnbStep(4);
         }
         var pending = await getPendingTrace(user.id);
+        var localCanSend = false;
         if (pending) {
           setTrace(pending);
           setPhase("discovery");
         } else {
           var cs = await canSendTrace(user.id);
+          localCanSend = cs;
           setCanSend(cs);
           if (cs) { setSentTone(null); }
         }
@@ -702,23 +715,28 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
         // Check still-here cooldown
         try {
-          var lastSH = await getLastStillHere(pair.id);
+          var lastSH = await getLastStillHere(pair.id, user.id);
           if (!lastSH || (Date.now() - new Date(lastSH.triggered_at).getTime()) > STILL_HERE_COOLDOWN_HOURS * 3600000) {
             setStillHereReady(true);
           }
-        } catch (e) { setStillHereReady(true); }
+        } catch (e) { /* keep false — don't bypass cooldown on error */ }
 
         // Check nudge eligibility (only if we have a pending sent trace)
+        var localSentTone = null;
         try {
           var lastSent = await getLastSentTrace(user.id);
           if (lastSent && !lastSent.discovered_at) {
+            localSentTone = lastSent.emotional_tone || null;
             setSentAt(new Date(lastSent.created_at).getTime());
             if (lastSent.emotional_tone) setSentTone(lastSent.emotional_tone);
             var sentHoursAgo = (Date.now() - new Date(lastSent.created_at).getTime()) / 3600000;
             if (sentHoursAgo >= NUDGE_DELAY_HOURS) {
-              var lastNdg = await getLastNudge(pair.id);
+              var lastNdg = await getLastNudge(pair.id, user.id);
               if (!lastNdg || new Date(lastNdg.triggered_at).getTime() < new Date(lastSent.created_at).getTime()) {
                 setNudgeReady(true);
+              } else {
+                // A nudge was already sent after this trace — don't show button again
+                setNudgeReady(false);
               }
             }
           }
@@ -726,16 +744,19 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
         // Check turn-reminder eligibility (partner's turn to send)
         try {
-          if (!canSend && !sentTone && contribs.length > 0) {
+          if (!localCanSend && !localSentTone) {
             var lastPairTr = await getLastPairTrace(pair.id);
             if (lastPairTr && lastPairTr.sender_id === user.id && lastPairTr.discovered_at) {
               setTurnWaiting(true);
               setTurnSince(new Date(lastPairTr.discovered_at).getTime());
               var turnHoursAgo = (Date.now() - new Date(lastPairTr.discovered_at).getTime()) / 3600000;
               if (turnHoursAgo >= TURN_REMINDER_DELAY_HOURS) {
-                var lastTurnNdg = await getLastNudge(pair.id);
+                var lastTurnNdg = await getLastNudge(pair.id, user.id);
                 if (!lastTurnNdg || new Date(lastTurnNdg.triggered_at).getTime() < new Date(lastPairTr.discovered_at).getTime()) {
                   setTurnNudgeReady(true);
+                } else {
+                  // Already sent a turn nudge — don't show again
+                  setTurnNudgeReady(false);
                 }
               }
             }
@@ -774,6 +795,9 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     markEventSeen(event.id, user.id, pair).catch(function() {});
   }, [user, pair]);
 
+  // ── Queued trace: received while in "creating" phase ──
+  var pendingTraceRef = useRef(null);
+
   // ── Realtime: traces ──
   useEffect(function() {
     if (!user) return;
@@ -785,6 +809,9 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         setSentTone(null); setTurnWaiting(false); setTurnNudgeReady(false); setTurnNudgeSent(false);
         soundIncoming();
         hapticMedium();
+      } else if (phR.current === "creating") {
+        // Queue the trace — will be shown when creating phase ends
+        pendingTraceRef.current = newTrace;
       }
       // Browser notification when in background
       if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
@@ -842,18 +869,15 @@ function ResonanceSpace({ user, pair, onDissolve }) {
           setReunionUI("incoming_reset");
         }
         if (proposal.status === "accepted") {
-          // Partner accepted the reset — execute it
-          executeResetArtwork(pair.id).then(function() {
-            completeProposal(proposal.id).catch(function(){});
-            setContribs([]);
-            setRecTones([]);
-            setReunion(null);
-            setReunionUI(null);
-          }).catch(function(e) { console.error("Reset failed:", e); });
+          // Partner accepted — the accepter's UI handler already called executeResetArtwork.
+          // Just clear local state here (for the proposer); completed event will also clear.
+          setContribs([]);
+          setRecTones([]);
+          setReunion(null);
+          setReunionUI(null);
         }
         if (proposal.status === "declined" || proposal.status === "completed") {
           setReunionUI(null);
-          // If completed, clear artwork locally too
           if (proposal.status === "completed") {
             setContribs([]);
             setRecTones([]);
@@ -886,11 +910,11 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         // Re-check for pending traces
         if (phR.current === "idle") {
           var pending = await getPendingTrace(user.id);
-          if (pending) {
+          if (pending && phR.current === "idle") {
             setTrace(pending);
             setPhase("discovery");
             setSentTone(null);
-          } else {
+          } else if (!pending && phR.current === "idle") {
             var cs = await canSendTrace(user.id);
             setCanSend(cs);
             if (cs) { setSentTone(null); }
@@ -1050,8 +1074,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
           // Rebuild cache every 5s or when stale
           if (!bleedCacheR.current || now - bleedCacheTimeR.current > 5000) {
             try {
-              var oc = document.createElement("canvas"); oc.width = w; oc.height = h;
-              var octx = oc.getContext("2d");
+              var oc = document.createElement("canvas"); oc.width = w * dpr; oc.height = h * dpr;
+              var octx = oc.getContext("2d"); octx.setTransform(dpr, 0, 0, dpr, 0, 0);
               var subset = [];
               for (var bi = 0; bi < cb.length; bi++) {
                 if (bi % Math.max(1, Math.floor(cb.length / bPhase.count)) === 0 && subset.length < bPhase.count) {
@@ -1248,13 +1272,15 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     } catch (e) {
       console.error("Discover error:", e);
       setAppError("Failed to save. Check your connection.");
+      setPhase("discovery");
+      return;
     }
 
     var path = tr.gesture_data.path;
     // Add to echoes array (max MAX_ECHOES)
     setResEchoes(function(prev) { return [{ tone: tr.emotional_tone, path: path, at: Date.now(), amplified: false }].concat(prev).slice(0, MAX_ECHOES); });
-    var newContribs;
-    setContribs(function(prev) { newContribs = prev.concat([{ tone: tr.emotional_tone, path: path }]); return newContribs; });
+    var newContribs = cbR.current.concat([{ tone: tr.emotional_tone, path: path }]);
+    setContribs(newContribs);
     setRecTones(function(prev) { return [tr.emotional_tone].concat(prev).slice(0, 5); });
     setLastTone(tr.emotional_tone);
     setTrace(null);
@@ -1315,12 +1341,23 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     }
   }, [phase, contribs.length, onGlimpseDone]);
 
+  // ── Persist moment to DB without transitioning phase (for whisper/echo display) ──
+  var finishMomentSilent = useCallback(async function(extraData) {
+    if (currentMoment && pair) {
+      var extra = Object.assign({}, extraData || {}, { sender_id: user.id });
+      await persistMoment(pair.id, currentMoment, extra).catch(function(e) { console.error("Persist moment error:", e); });
+      try { localStorage.setItem("last_moment_at", String(Date.now())); } catch(e) {}
+    }
+    setCurrentMoment(null);
+    setMTone(null);
+  }, [currentMoment, pair, user]);
+
   // ── Finish moment → persist to DB → go to glimpse ──
   var finishMoment = useCallback(async function(extraData) {
     if (currentMoment && pair) {
       // Persist with sender_id so partner's listener knows who sent it
       var extra = Object.assign({}, extraData || {}, { sender_id: user.id });
-      await persistMoment(pair.id, currentMoment, extra);
+      await persistMoment(pair.id, currentMoment, extra).catch(function(e) { console.error("Persist moment error:", e); });
       try { localStorage.setItem("last_moment_at", String(Date.now())); } catch(e) {}
     }
     setCurrentMoment(null);
@@ -1337,17 +1374,21 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   var onWhisperSelect = useCallback(function(w) {
     hapticLight();
-    finishMoment({ whisper_word: w });
-  }, [finishMoment]);
+    setWhisper(w);
+    setMPhase("whisperShow");
+    finishMomentSilent({ whisper_word: w });
+  }, [finishMomentSilent]);
   var onWhisperTimeout = useCallback(function() { finishMoment(null); }, [finishMoment]);
-  var onWhisperDone = useCallback(function() { setWhisper(null); }, []);
+  var onWhisperDone = useCallback(function() { setWhisper(null); setMPhase(null); setPhase("glimpse"); }, []);
 
   var onEchoSelect = useCallback(function(m) {
     hapticLight();
-    finishMoment({ echo_mark: m.g, echo_name: m.n });
-  }, [finishMoment]);
+    setEchoM(m);
+    setMPhase("echoShow");
+    finishMomentSilent({ echo_mark: m.g, echo_name: m.n });
+  }, [finishMomentSilent]);
   var onEchoTimeout = useCallback(function() { finishMoment(null); }, [finishMoment]);
-  var onEchoDone = useCallback(function() { setEchoM(null); }, []);
+  var onEchoDone = useCallback(function() { setEchoM(null); setMPhase(null); setPhase("glimpse"); }, []);
 
   var onPulseCapture = useCallback(function(p2) {
     if (p2) { setPendPulse(p2); hapticSend(); }
@@ -1369,6 +1410,14 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   // ── Send trace ──
   var onSendTrace = useCallback(async function(data) {
+    // Check if a trace arrived while we were in "creating"
+    if (pendingTraceRef.current) {
+      var qt = pendingTraceRef.current; pendingTraceRef.current = null;
+      setTrace(qt); setPhase("discovery"); setCanSend(false);
+      setSentTone(null); setTurnWaiting(false); setTurnNudgeReady(false); setTurnNudgeSent(false);
+      soundIncoming(); hapticMedium();
+      return;
+    }
     setPhase("idle"); setCanSend(false); setSentTone(data.tone);
     setSentAt(Date.now()); setNudgeReady(false); setNudgeSent(false);
     soundSend(); hapticSend();
@@ -1381,6 +1430,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     } catch (err) {
       console.error("Send error:", err);
       setCanSend(true);
+      setSentTone(null);
       setAppError("Failed to send trace. Try again.");
     }
   }, [pair, user, partnerId]);
@@ -1427,8 +1477,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     var ch = createCanvasChannel(pair.id,
       function(data) { if (data.userId !== user.id) setPartnerStrokes(function(prev) { return prev.concat(data.points || []); }); },
       function(data) {
-        // Partner triggered canvas_start — join automatically
-        if (data.userId !== user.id && !sharedPhase) {
+        // Partner triggered canvas_start — join automatically (use ref to avoid stale closure)
+        if (data.userId !== user.id && !sharedPhaseR.current) {
           setSharedPhase("appearing");
           soundSharedCanvas(); hapticMoment();
           setTimeout(function() { setSharedPhase("drawing"); setSharedTimer(30); }, 3000);
@@ -1438,7 +1488,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     );
     canvasChannelR.current = ch;
     return function() { supabase.removeChannel(ch); canvasChannelR.current = null; };
-  }, [pair, user, sharedPhase]);
+  }, [pair, user]);
 
   // ── Shared Canvas: automatic detection (both online + cooldown + no recent moment) ──
   useEffect(function() {
@@ -1454,7 +1504,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     try { lastMoment = parseInt(localStorage.getItem("last_moment_at") || "0"); } catch(e) {}
     if (Date.now() - lastMoment < 5 * 3600000) return;
 
-    // Both online for 10 seconds — trigger automatically
+    // Both online for 10 seconds — only the user with the lower ID sends the invite (deterministic)
+    if (user && partnerId && user.id >= partnerId) return;
     var timer = setTimeout(function() {
       // Re-check conditions
       if (!canvasChannelR.current) return;
@@ -1477,7 +1528,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
           var myStrokes = myStrokesR.current;
           if (myStrokes.length > 3 && pair && user) {
             var useTone = lastTone || "nearness";
-            saveSharedCanvas(pair.id, user.id, myStrokes, useTone).catch(function(){});
+            saveSharedCanvas(pair.id, user.id, myStrokes, useTone).catch(function(e) { console.error("Shared canvas save error:", e); });
             setContribs(function(p) { return p.concat([{ tone: useTone, path: myStrokes }]); });
           }
           try { localStorage.setItem("last_shared_canvas", String(Date.now())); } catch(e) {}
@@ -1739,7 +1790,11 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {phase === "glimpse" && contribs.length > 0 ? <GlimpseWrapper contribs={contribs} onDone={onGlimpseDone} /> : null}
 
       {/* Trace creation */}
-      {phase === "creating" ? <TraceCreationUI onSend={onSendTrace} onCancel={function() { setPhase("idle"); }} guided={onbStep <= 3} /> : null}
+      {phase === "creating" ? <TraceCreationUI onSend={onSendTrace} onCancel={function() {
+        var qt = pendingTraceRef.current;
+        if (qt) { pendingTraceRef.current = null; setTrace(qt); setPhase("discovery"); setCanSend(false); setSentTone(null); setTurnWaiting(false); setTurnNudgeReady(false); setTurnNudgeSent(false); soundIncoming(); hapticMedium(); }
+        else { setPhase("idle"); }
+      }} guided={onbStep <= 3} /> : null}
 
       {/* Moment intros */}
       {mPhase === "twin_connection_intro" ? <MomentIntro rgb={mRgb} label="SOMETHING RARE HAPPENED" onDone={onIntroTwinDone} /> : null}
@@ -2217,31 +2272,6 @@ function SharedCanvasUI({ myTone, partnerTone, partnerStrokes, timer, channelRef
 }
 
 
-function PulseCaptureUI({ tone, rgb, onCapture }) {
-  var _t = useState(null), tm = _t[0], st = _t[1];
-  var _pp = useState([]), pp = _pp[0], spp = _pp[1];
-  var _d = useState(false), dr = _d[0], sdr = _d[1];
-  var _dn = useState(false), dn = _dn[0], sdn = _dn[1];
-  var pr = useRef([]), cv = useRef(null), started = useRef(false);
-
-  useEffect(function() { if (tm === null) return; var iv = setInterval(function() { st(function(t) { if (t === null) return null; if (t <= 1) { if (!dn) { sdn(true); onCapture(pr.current.length > 3 ? pr.current : null); } return 0; } return t-1; }); }, 1000); return function() { clearInterval(iv); }; }, [tm, dn, onCapture]);
-
-  var oD = useCallback(function(ev) { if (dn) return; if (!started.current) { started.current = true; st(4); } var r = ev.currentTarget.getBoundingClientRect(); pr.current = [{ x:(ev.clientX-r.left)/r.width, y:(ev.clientY-r.top)/r.height, t:Date.now() }]; spp(pr.current.slice()); sdr(true); }, [dn]);
-  var oM = useCallback(function(ev) { if (!dr || dn) return; var r = ev.currentTarget.getBoundingClientRect(); if (Date.now()-pr.current[0].t > 2000) { sdr(false); return; } pr.current.push({ x:(ev.clientX-r.left)/r.width, y:(ev.clientY-r.top)/r.height, t:Date.now() }); spp(pr.current.slice()); }, [dr, dn]);
-  var oU = useCallback(function() { if (!dr) return; sdr(false); if (pr.current.length > 5 && !dn) { sdn(true); onCapture(pr.current); } }, [dr, dn, onCapture]);
-
-  useEffect(function() { var c = cv.current; if (!c) return; var ctx = c.getContext("2d"), dpr = window.devicePixelRatio || 1, r = c.getBoundingClientRect(); c.width = r.width*dpr; c.height = r.height*dpr; ctx.scale(dpr,dpr); var w = r.width, h = r.height; ctx.clearRect(0,0,w,h); if (pp.length < 2) return;
-    var cols = TONES[tone] ? TONES[tone].colors : ["#888","#aaa"]; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.beginPath(); ctx.strokeStyle = cols[1]+"33"; ctx.lineWidth = 14; pp.forEach(function(pt,i) { i===0?ctx.moveTo(pt.x*w,pt.y*h):ctx.lineTo(pt.x*w,pt.y*h); }); ctx.stroke(); ctx.beginPath(); ctx.strokeStyle = cols[0]+"DD"; ctx.lineWidth = 3; pp.forEach(function(pt,i) { i===0?ctx.moveTo(pt.x*w,pt.y*h):ctx.lineTo(pt.x*w,pt.y*h); }); ctx.stroke(); }, [pp, tone]);
-
-  return <div style={{ position:"absolute",inset:0,zIndex:45,display:"flex",flexDirection:"column",fontFamily:FONT,animation:"fadeIn 0.6s ease" }}>
-    <div style={{ position:"absolute",inset:0,background:"rgba(6,6,12,0.9)",zIndex:-1 }} />
-    <div style={{ textAlign:"center",padding:"30px 0 10px" }}>
-      <div style={{ color:"rgba(255,255,255,0.58)",fontSize:13,letterSpacing:"0.3em",fontWeight:200 }}>AMPLIFIED REVEAL</div>
-      <div style={{ color:"rgba("+rgb+",0.6)",fontSize:12,letterSpacing:"0.18em",fontWeight:300 }}>{pp.length>5?"reaction captured":tm===null?"touch to react":"drawing \u00B7 "+tm+"s"}</div>
-    </div>
-    <div style={{ flex:1,position:"relative",touchAction:"none",cursor:"crosshair" }} onPointerDown={oD} onPointerMove={oM} onPointerUp={oU}><canvas ref={cv} style={{ position:"absolute",inset:0,width:"100%",height:"100%" }} /></div>
-  </div>;
-}
 
 function RevealCanvas({ tone, path, amplified, pulseGesture, onDone }) {
   var ref = useRef(null);
@@ -2316,7 +2346,9 @@ function TraceCreationUI({ onSend, onCancel, guided }) {
   var _d = useState(false), sent = _d[0], setSent = _d[1];
   var _pv = useState(null), previewTone = _pv[0], setPreviewTone = _pv[1];
   var _pvA = useState(0), previewAlpha = _pvA[0], setPreviewAlpha = _pvA[1];
-  var cv = useRef(null), pr = useRef([]);
+  var cv = useRef(null), pr = useRef([]), sendTimerR = useRef(null);
+
+  useEffect(function() { return function() { if (sendTimerR.current) clearTimeout(sendTimerR.current); }; }, []);
 
   // Tone preview: flash background, play sound, then set tone
   var selectTone = useCallback(function(k) {
@@ -2335,7 +2367,7 @@ function TraceCreationUI({ onSend, onCancel, guided }) {
 
   var oD = useCallback(function(ev) { if (!tone || sent) return; var r = ev.currentTarget.getBoundingClientRect(); pr.current = [{ x:(ev.clientX-r.left)/r.width, y:(ev.clientY-r.top)/r.height, t:Date.now() }]; setPath(pr.current.slice()); setDr(true); }, [tone, sent]);
   var oM = useCallback(function(ev) { if (!dr) return; var r = ev.currentTarget.getBoundingClientRect(); pr.current.push({ x:(ev.clientX-r.left)/r.width, y:(ev.clientY-r.top)/r.height, t:Date.now() }); setPath(pr.current.slice()); }, [dr]);
-  var oU = useCallback(function() { if (!dr) return; setDr(false); if (pr.current.length > 5 && tone) { setSent(true); setTimeout(function() { onSend({ tone: tone, path: pr.current }); }, 1800); } }, [dr, tone, onSend]);
+  var oU = useCallback(function() { if (!dr) return; setDr(false); if (pr.current.length > 5 && tone) { setSent(true); sendTimerR.current = setTimeout(function() { sendTimerR.current = null; onSend({ tone: tone, path: pr.current }); }, 1800); } }, [dr, tone, onSend]);
 
   useEffect(function() { var c = cv.current; if (!c || !tone) return; var ctx = c.getContext("2d"), dpr = window.devicePixelRatio || 1, r = c.getBoundingClientRect(); c.width = r.width*dpr; c.height = r.height*dpr; ctx.scale(dpr,dpr); var w = r.width, h = r.height; ctx.clearRect(0,0,w,h); if (path.length < 2) return;
     var cols = TONES[tone].colors, ch = TONES[tone].ch; ctx.lineCap = "round"; ctx.lineJoin = "round";
@@ -2385,6 +2417,7 @@ function ReunionPropose({ pair, user, onDone }) {
   var _s = useState(false), sending = _s[0], setSending = _s[1];
 
   var today = new Date().toISOString().slice(0, 10);
+  var tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   var submit = async function() {
     if (!dateVal || dateVal <= today) return;
     setSending(true);
@@ -2405,7 +2438,7 @@ function ReunionPropose({ pair, user, onDone }) {
       choose a day to see each other<br/>
       <span style={{ color:"rgba(255,255,255,0.52)",fontSize:12 }}>your shared artwork will be revealed</span>
     </div>
-    <input type="date" value={dateVal} min={today} onChange={function(ev) { setDateVal(ev.target.value); }}
+    <input type="date" value={dateVal} min={tomorrow} onChange={function(ev) { setDateVal(ev.target.value); }}
       style={{ fontSize:16,fontWeight:200,color:"rgba(255,255,255,0.58)",padding:"14px 24px",borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",outline:"none",fontFamily:FONT,colorScheme:"dark",marginBottom:24 }} />
     <div onClick={dateVal && !sending ? submit : undefined}
       style={{ padding:"14px 44px",borderRadius:24,border:"1px solid "+(dateVal?"rgba(212,165,116,0.2)":"rgba(255,255,255,0.06)"),background:dateVal?"rgba(212,165,116,0.06)":"transparent",cursor:dateVal?"pointer":"default",color:dateVal?"rgba(212,165,116,0.6)":"rgba(255,255,255,0.15)",fontSize:12,letterSpacing:"0.18em",fontWeight:200 }}>
