@@ -154,7 +154,7 @@ function PairSetup({ onPaired, userId }) {
     try {
       var params = new URLSearchParams(window.location.search);
       var urlCode = params.get("code");
-      if (urlCode && urlCode.length >= 3) {
+      if (urlCode && urlCode.length >= 6) {
         setCode(urlCode.toUpperCase());
         setMode("join");
         // Clean URL
@@ -174,7 +174,7 @@ function PairSetup({ onPaired, userId }) {
   };
 
   var handleJoin = async function() {
-    if (code.length < 3) return;
+    if (code.length < 6) return;
     setCon(true); setErr(null);
     try {
       var result = await joinPair(code);
@@ -234,11 +234,11 @@ function PairSetup({ onPaired, userId }) {
       ) : (
         <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:20 }}>
           <div style={{ color:"rgba(255,255,255,0.5)",fontSize:10,letterSpacing:"0.2em",fontWeight:200 }}>ENTER INVITE CODE</div>
-          <input value={code} onChange={function(ev) { setCode(ev.target.value.toUpperCase()); }} placeholder="______" maxLength={6}
-            style={{ fontSize:28,fontWeight:300,letterSpacing:"0.4em",color:"rgba(255,255,255,0.6)",padding:"14px 28px",borderRadius:12,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.1)",textAlign:"center",outline:"none",fontFamily:FONT,width:240 }}/>
+          <input value={code} onChange={function(ev) { setCode(ev.target.value.toUpperCase()); }} placeholder="________" maxLength={8}
+            style={{ fontSize:24,fontWeight:300,letterSpacing:"0.3em",color:"rgba(255,255,255,0.6)",padding:"14px 28px",borderRadius:12,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.1)",textAlign:"center",outline:"none",fontFamily:FONT,width:280 }}/>
           <div style={{ display:"flex",gap:16 }}>
             <div onClick={function() { setMode("choose"); setErr(null); }} style={{ padding:"10px 24px",borderRadius:20,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:10,letterSpacing:"0.15em",fontWeight:200 }}>BACK</div>
-            <div onClick={handleJoin} style={{ padding:"10px 24px",borderRadius:20,border:"1px solid rgba(255,255,255,0.12)",background:code.length>=3?"rgba(255,255,255,0.08)":"transparent",cursor:code.length>=3?"pointer":"default",color:code.length>=3?"rgba(255,255,255,0.5)":"rgba(255,255,255,0.15)",fontSize:10,letterSpacing:"0.15em",fontWeight:200 }}>CONNECT</div>
+            <div onClick={handleJoin} style={{ padding:"10px 24px",borderRadius:20,border:"1px solid rgba(255,255,255,0.12)",background:code.length>=6?"rgba(255,255,255,0.08)":"transparent",cursor:code.length>=6?"pointer":"default",color:code.length>=6?"rgba(255,255,255,0.5)":"rgba(255,255,255,0.15)",fontSize:10,letterSpacing:"0.15em",fontWeight:200 }}>CONNECT</div>
           </div>
         </div>
       )}
@@ -274,7 +274,7 @@ export default function App() {
         }
       } catch (authErr) {
         console.error("Auth error:", authErr);
-        setInitError("Connection failed: " + (authErr.message || String(authErr)) + ". Make sure Anonymous Auth is enabled in Supabase and the SQL schema has been run.");
+        setInitError("Connection failed. Please try again later.");
       }
     })();
   }, []);
