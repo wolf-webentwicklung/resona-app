@@ -327,3 +327,28 @@ export var TURN_REMINDER_DELAY_HOURS = 3;
 // ── Idle Touch Ripple Config ──
 export var RIPPLE_MAX_AGE_MS = 3000;
 export var RIPPLE_MAX_POINTS = 60;
+
+// ── Discovery Mode Config ──
+export var WAKE_BREATH_CYCLE_MS = 5500;
+export var WAKE_THRESHOLD = 0.72;
+export var FOLLOW_DURATION_MS = 3500;
+
+// ── Discovery Mode Assignment ──
+// Computed at send time from tone + gesture feel.
+// First trace always gets 'stillness' to ensure an intuitive onboarding moment.
+export function computeDiscoveryMode(tone, feel, isFirstTrace) {
+  if (isFirstTrace) return 'stillness';
+  if (!feel) return 'stillness';
+
+  if (tone === 'playfulness') return 'follow';
+
+  if (tone === 'longing' || tone === 'tension') {
+    if (feel.duration > 2000 || feel.intensity > 0.45) return 'wake';
+  }
+
+  if (feel.speed > 0.7 && feel.complexity > 0.5 && tone !== 'nearness' && tone !== 'warmth') {
+    return 'follow';
+  }
+
+  return 'stillness';
+}

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { analyzeGestureFeel } from './constants.js';
+import { analyzeGestureFeel, computeDiscoveryMode } from './constants.js';
 
 // ═══════════════════════════════════════════
 // RESONA — SUPABASE CONFIG
@@ -92,18 +92,24 @@ export async function canSendTrace(userId) {
 }
 
 // ── Traces: send a trace ──
-export async function sendTrace(pairId, senderId, receiverId, path, tone) {
+export async function sendTrace(pairId, senderId, receiverId, path, tone, isFirstTrace) {
   // Tone-based discovery parameters — radii sized for finger touch targets
   var toneParams = {
     nearness:    { baseRadius: 0.15, preferSignal: 'drift' },
     warmth:      { baseRadius: 0.13, preferSignal: null },
-    playfulness: { baseRadius: 0.12, preferSignal: 'shimmer', driftSpeed: 0.15 },
-    longing:     { baseRadius: 0.10, preferSignal: 'pulse' },
-    tension:     { baseRadius: 0.08, preferSignal: 'flicker' },
+    playfulness: { baseRadius: 0.12, preferSignal: null },
+    longing:     { baseRadius: 0.10, preferSignal: null },
+    tension:     { baseRadius: 0.08, preferSignal: null },
   };
   var tp = toneParams[tone] || { baseRadius: 0.08, preferSignal: null };
   var signals = ['shimmer','pulse','drift','flicker','density','wave'];
-  var sig = tp.preferSignal || signals[Math.floor(Math.random() * signals.length)];
+  var feel = analyzeGestureFeel(path);
+  var dm = computeDiscoveryMode(tone, feel, isFirstTrace);
+
+  // Signal type: mode takes precedence, then tone preference, then random
+  var modeSignals = { wake: 'pulse', follow: 'drift', stillness: tp.preferSignal };
+  var sig = modeSignals[dm] || signals[Math.floor(Math.random() * signals.length)];
+
   var pos = { x: 0.15 + Math.random() * 0.7, y: 0.15 + Math.random() * 0.55 };
   var sr = tp.baseRadius + (Math.random() - 0.5) * 0.04;
   var passive = Math.random() < 0.2;
@@ -112,18 +118,14 @@ export async function sendTrace(pairId, senderId, receiverId, path, tone) {
     pair_id: pairId,
     sender_id: senderId,
     receiver_id: receiverId,
-    gesture_data: { path, feel: analyzeGestureFeel(path) },
+    gesture_data: { path, feel },
     emotional_tone: tone,
     signal_type: sig,
     reveal_position: pos,
     search_radius: sr,
     passive_reveal: passive,
+    discovery_mode: dm,
   };
-
-  // Add drift speed for playfulness tone
-  if (tp.driftSpeed) {
-    traceData.reveal_position.drift_speed = tp.driftSpeed;
-  }
 
   const { data, error } = await supabase.from('traces').insert(traceData).select().single();
 

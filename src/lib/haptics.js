@@ -18,3 +18,6 @@ export function hapticProximity(intensity) {
   if (!can || intensity < 0.2) return;
   navigator.vibrate(Math.round(5 + intensity * 25));
 }
+export function hapticWakePeak() { if (can) navigator.vibrate([8, 25, 15]); }
+export function hapticFollowPulse() { if (can) navigator.vibrate(12); }
+export function hapticFollowComplete() { if (can) navigator.vibrate([20, 40, 30, 40, 50]); }

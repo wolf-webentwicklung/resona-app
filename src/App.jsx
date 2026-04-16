@@ -12,14 +12,15 @@ import {
   supabase
 } from './lib/supabase.js';
 import { detectMoment, persistMoment } from './lib/moments.js';
-import { hapticTap, hapticLight, hapticMedium, hapticReveal, hapticMoment, hapticSend, hapticProximity } from './lib/haptics.js';
+import { hapticTap, hapticLight, hapticMedium, hapticReveal, hapticMoment, hapticSend, hapticProximity, hapticWakePeak, hapticFollowPulse, hapticFollowComplete } from './lib/haptics.js';
 import { initAudio, soundFound, soundReveal, soundMoment, soundSend, soundIncoming, soundArtworkReveal, soundStillHere, soundNudge, soundTonePreview, soundSharedCanvas } from './lib/audio.js';
 import {
   TONES, TONE_KEYS, WHISPER_POOL, ECHO_POOL, GLIMPSE_TEXTS, FONT,
   lerp, dst, clamp, pick, pickN, hex2, makeNoise, analyzeGesture, drawGesturePath, drawArtwork,
   STILL_HERE_COOLDOWN_HOURS, NUDGE_DELAY_HOURS, TURN_REMINDER_DELAY_HOURS,
   EPOCH_THRESHOLDS, MILESTONES, TONE_DISCOVERY, RESIDUE_CONFIG, MAX_ECHOES,
-  getEpochShift, getDiscoveryMod, getBleedPhase, RIPPLE_MAX_AGE_MS, RIPPLE_MAX_POINTS
+  getEpochShift, getDiscoveryMod, getBleedPhase, RIPPLE_MAX_AGE_MS, RIPPLE_MAX_POINTS,
+  WAKE_BREATH_CYCLE_MS, WAKE_THRESHOLD, FOLLOW_DURATION_MS
 } from './lib/constants.js';
 
 // ══════════════════════════════════════
@@ -619,6 +620,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
   var partnerHereR = useRef(false), presenceBlendR = useRef(0);
   var epochShiftR = useRef({ hueShift: 0, satBoost: 0 });
   var effectiveRevealPosR = useRef(null);
+  var breathAmpR = useRef(0);
+  var followInProxR = useRef(false);
 
   useEffect(function() { phR.current = phase; }, [phase]);
   useEffect(function() { trR.current = trace; }, [trace]);
@@ -1147,14 +1150,20 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       // Discovery rendering
       if (ph === "discovery" && tr) {
         var tone = tr.emotional_tone;
+        var dm = tr.discovery_mode || 'stillness';
         // ── Gesture Feel (Hebel 1) ──
         var dMod = getDiscoveryMod(tr.gesture_data);
         // ts: time scaled by noiseSpeed — calm traces → slow signals, intense → fast
         var ts = t * dMod.noiseSpeed;
-        // Playfulness drift: reveal position slowly moves in a circle
+        // Position drift — Follow: Lissajous requiring active tracking; others: legacy playfulness drift
         var baseX = tr.reveal_position.x, baseY = tr.reveal_position.y;
         var driftSpd = tr.reveal_position.drift_speed || 0;
-        if (driftSpd > 0) {
+        if (dm === 'follow') {
+          baseX += Math.sin(t * 0.48) * 0.11 + Math.sin(t * 0.73) * 0.035;
+          baseY += Math.cos(t * 0.31) * 0.09 + Math.cos(t * 0.87) * 0.025;
+          baseX = clamp(baseX, 0.10, 0.90);
+          baseY = clamp(baseY, 0.10, 0.85);
+        } else if (driftSpd > 0) {
           baseX += Math.sin(t * driftSpd) * 0.04;
           baseY += Math.cos(t * driftSpd * 0.7) * 0.03;
           baseX = clamp(baseX, 0.08, 0.92);
@@ -1174,6 +1183,25 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         else if (sig === "flicker") { for (var fi = 0; fi < 6; fi++) { if (Math.random() > 0.4) { ctx.fillStyle = "rgba("+cr3+","+cg3+","+cb3+","+(0.03+Math.random()*0.05)+")"; ctx.beginPath(); ctx.arc(Math.random()*w,Math.random()*h,1.5+Math.random()*2,0,Math.PI*2); ctx.fill(); } } }
         else if (sig === "density") { var nx = n1(ts*0.15,0)*0.3+0.35, ny = n1(0,ts*0.12)*0.3+0.35; for (var ddx = -55; ddx < 55; ddx += 8) { for (var ddy = -55; ddy < 55; ddy += 8) { var dd = dst(0,0,ddx,ddy); if (dd < 55) { var nv2 = n1((nx*w+ddx)*0.012+ts,(ny*h+ddy)*0.012); ctx.fillStyle = "rgba("+cr3+","+cg3+","+cb3+","+(0.05*(1-dd/55)*(nv2+1)/2)+")"; ctx.fillRect(nx*w+ddx,ny*h+ddy,6,6); } } } }
         else { for (var wi = 0; wi < w; wi += 5) { var wy = h/2+Math.sin(wi*0.01+ts*1.1)*25; ctx.fillStyle = "rgba("+cr3+","+cg3+","+cb3+",0.025)"; ctx.fillRect(wi,wy,4,2); } }
+
+        // Wake mode: breathing pulse at reveal position — always visible, informs timing
+        if (dm === 'wake') {
+          var bAmp = (Math.sin((Date.now() / WAKE_BREATH_CYCLE_MS) * Math.PI * 2 - Math.PI / 2) + 1) / 2;
+          breathAmpR.current = bAmp;
+          var bGlowR = (28 + bAmp * 75) * dMod.glowRadius;
+          var bGrad = ctx.createRadialGradient(tx, ty, 0, tx, ty, bGlowR);
+          bGrad.addColorStop(0, "rgba("+cr3+","+cg3+","+cb3+","+(0.05+bAmp*0.22)+")");
+          bGrad.addColorStop(0.45, "rgba("+cr3+","+cg3+","+cb3+","+(0.02+bAmp*0.08)+")");
+          bGrad.addColorStop(1, "transparent");
+          ctx.fillStyle = bGrad; ctx.beginPath(); ctx.arc(tx, ty, bGlowR, 0, Math.PI*2); ctx.fill();
+          if (bAmp > 0.82) {
+            var peakFrac = (bAmp - 0.82) / 0.18;
+            var peakGrad = ctx.createRadialGradient(tx, ty, 0, tx, ty, 18);
+            peakGrad.addColorStop(0, "rgba("+cr3+","+cg3+","+cb3+","+(peakFrac*0.45)+")");
+            peakGrad.addColorStop(1, "transparent");
+            ctx.fillStyle = peakGrad; ctx.beginPath(); ctx.arc(tx, ty, 18, 0, Math.PI*2); ctx.fill();
+          }
+        }
 
         // Proximity zones
         if (tc) {
@@ -1197,9 +1225,20 @@ function ResonanceSpace({ user, pair, onDissolve }) {
             pts.forEach(function(p2) { p2.vx *= 0.88; p2.vy *= 0.88; p2.x += (Math.random()-0.5)*0.001; p2.y += (Math.random()-0.5)*0.001; });
           }
           if (hp > 0) {
-            ctx.strokeStyle = "rgba("+cr3+","+cg3+","+cb3+","+(0.4+hp*0.6)+")"; ctx.lineWidth = 3;
-            ctx.beginPath(); ctx.arc(tc.x*w,tc.y*h,34,-Math.PI/2,-Math.PI/2+hp*Math.PI*2); ctx.stroke();
-            var ig = ctx.createRadialGradient(tc.x*w,tc.y*h,0,tc.x*w,tc.y*h,28); ig.addColorStop(0,"rgba("+cr3+","+cg3+","+cb3+","+(hp*0.5)+")"); ig.addColorStop(1,"transparent"); ctx.fillStyle = ig; ctx.beginPath(); ctx.arc(tc.x*w,tc.y*h,28,0,Math.PI*2); ctx.fill();
+            if (dm === 'follow') {
+              // Progress arc at reveal position — visually tracks the moving target
+              ctx.strokeStyle = "rgba("+cr3+","+cg3+","+cb3+","+(0.3+hp*0.5)+")"; ctx.lineWidth = 2.5;
+              ctx.beginPath(); ctx.arc(tx,ty,30,-Math.PI/2,-Math.PI/2+hp*Math.PI*2); ctx.stroke();
+              // Dashed connection line: finger → reveal position
+              ctx.save(); ctx.setLineDash([3, 7]);
+              ctx.strokeStyle = "rgba("+cr3+","+cg3+","+cb3+","+(hp*0.25)+")"; ctx.lineWidth = 1;
+              ctx.beginPath(); ctx.moveTo(tc.x*w,tc.y*h); ctx.lineTo(tx,ty); ctx.stroke();
+              ctx.restore();
+            } else {
+              ctx.strokeStyle = "rgba("+cr3+","+cg3+","+cb3+","+(0.4+hp*0.6)+")"; ctx.lineWidth = 3;
+              ctx.beginPath(); ctx.arc(tc.x*w,tc.y*h,34,-Math.PI/2,-Math.PI/2+hp*Math.PI*2); ctx.stroke();
+              var ig = ctx.createRadialGradient(tc.x*w,tc.y*h,0,tc.x*w,tc.y*h,28); ig.addColorStop(0,"rgba("+cr3+","+cg3+","+cb3+","+(hp*0.5)+")"); ig.addColorStop(1,"transparent"); ctx.fillStyle = ig; ctx.beginPath(); ctx.arc(tc.x*w,tc.y*h,28,0,Math.PI*2); ctx.fill();
+            }
           }
         } else {
           pts.forEach(function(p2) { p2.vx *= 0.88; p2.vy *= 0.88; p2.x += (Math.random()-0.5)*0.001; p2.y += (Math.random()-0.5)*0.001; });
@@ -1222,15 +1261,48 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   // ── Touch handlers ──
   var REVEAL_MS = 1500;
-  var startHold = useCallback(function() {
+  var WAKE_REVEAL_MS = 800;
+  var WAKE_DRAIN_RATE = 0.25;
+
+  var startReveal = useCallback(function() {
     if (holdRef.current) return; hpR.current = 0; setHoldProg(0);
+    var dm = (trR.current && trR.current.discovery_mode) || 'stillness';
     soundFound(); hapticMedium();
-    var s = Date.now();
+    if (dm === 'wake') {
+      holdRef.current = setInterval(function() {
+        var bAmp = (Math.sin((Date.now() / WAKE_BREATH_CYCLE_MS) * Math.PI * 2 - Math.PI / 2) + 1) / 2;
+        var prev = hpR.current;
+        var next = bAmp > WAKE_THRESHOLD
+          ? Math.min(1, prev + 16 / WAKE_REVEAL_MS)
+          : Math.max(0, prev - 16 / WAKE_REVEAL_MS * WAKE_DRAIN_RATE);
+        if (bAmp > WAKE_THRESHOLD && prev < 0.15) hapticWakePeak();
+        hpR.current = next; setHoldProg(next);
+        if (next >= 1) { clearInterval(holdRef.current); holdRef.current = null; hapticReveal(); setPhase("revealing"); }
+      }, 16);
+    } else {
+      var s = Date.now();
+      holdRef.current = setInterval(function() {
+        var p2 = Math.min(1, (Date.now()-s)/REVEAL_MS); hpR.current = p2; setHoldProg(p2);
+        if (p2 >= 1) { clearInterval(holdRef.current); holdRef.current = null; hapticReveal(); setPhase("revealing"); }
+      }, 16);
+    }
+  }, []);
+
+  var startFollow = useCallback(function() {
+    if (holdRef.current) return; hpR.current = 0; setHoldProg(0);
     holdRef.current = setInterval(function() {
-      var p2 = Math.min(1, (Date.now()-s)/REVEAL_MS); hpR.current = p2; setHoldProg(p2);
-      if (p2 >= 1) { clearInterval(holdRef.current); holdRef.current = null; hapticReveal(); setPhase("revealing"); }
+      var inProx = followInProxR.current;
+      var prev = hpR.current;
+      var next = inProx
+        ? Math.min(1, prev + 16 / FOLLOW_DURATION_MS)
+        : Math.max(0, prev - 16 / (FOLLOW_DURATION_MS * 3));
+      if (inProx && ((prev < 0.5 && next >= 0.5) || (prev < 0.75 && next >= 0.75) || (prev < 0.9 && next >= 0.9))) hapticFollowPulse();
+      hpR.current = next; setHoldProg(next);
+      if (next >= 1) { clearInterval(holdRef.current); holdRef.current = null; hapticFollowComplete(); setPhase("revealing"); }
+      if (next <= 0 && !inProx) { clearInterval(holdRef.current); holdRef.current = null; }
     }, 16);
   }, []);
+
   var stopHold = useCallback(function() { if (holdRef.current) { clearInterval(holdRef.current); holdRef.current = null; } hpR.current = 0; setHoldProg(0); }, []);
 
   var lastProxZone = useRef(-1);
@@ -1240,8 +1312,15 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     if (phase !== "discovery" || !trace) return;
     setTouch({ x, y }); tcR.current = { x, y }; hapticTap();
     var ep = effectiveRevealPosR.current || trace.reveal_position;
-    if (dst(x, y, ep.x, ep.y) / Math.sqrt(2) < (trace.search_radius || 0.08)) startHold();
-  }, [phase, trace, startHold]);
+    var dm = trace.discovery_mode || 'stillness';
+    if (dm === 'follow') {
+      var inP = dst(x, y, ep.x, ep.y) / Math.sqrt(2) < (trace.search_radius || 0.12);
+      followInProxR.current = inP;
+      if (inP && !holdRef.current) startFollow();
+    } else {
+      if (dst(x, y, ep.x, ep.y) / Math.sqrt(2) < (trace.search_radius || 0.08)) startReveal();
+    }
+  }, [phase, trace, startReveal, startFollow]);
 
   var onMove = useCallback(function(ev) {
     var r = ev.currentTarget.getBoundingClientRect(), x = (ev.clientX-r.left)/r.width, y = (ev.clientY-r.top)/r.height;
@@ -1250,13 +1329,27 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     setTouch({ x, y }); tcR.current = { x, y };
     var ep = effectiveRevealPosR.current || trace.reveal_position;
     var d = dst(x, y, ep.x, ep.y) / Math.sqrt(2);
-    var zone = d < 0.10 ? 4 : d < 0.18 ? 3 : d < 0.35 ? 2 : d < 0.55 ? 1 : 0;
-    if (zone > 0 && zone !== lastProxZone.current) { hapticProximity(zone / 4); }
-    lastProxZone.current = zone;
-    if (d < (trace.search_radius || 0.08)) { if (!holdRef.current) startHold(); } else stopHold();
-  }, [phase, trace, startHold, stopHold]);
+    var dm = trace.discovery_mode || 'stillness';
+    if (dm === 'follow') {
+      var inP = d < (trace.search_radius || 0.12);
+      followInProxR.current = inP;
+      if (inP && !holdRef.current) startFollow();
+      var fz = d < 0.10 ? 4 : d < 0.18 ? 3 : d < 0.35 ? 2 : 0;
+      if (fz > 0 && fz !== lastProxZone.current) hapticProximity(fz / 4);
+      lastProxZone.current = fz;
+    } else {
+      var zone = d < 0.10 ? 4 : d < 0.18 ? 3 : d < 0.35 ? 2 : d < 0.55 ? 1 : 0;
+      if (zone > 0 && zone !== lastProxZone.current) { hapticProximity(zone / 4); }
+      lastProxZone.current = zone;
+      if (d < (trace.search_radius || 0.08)) { if (!holdRef.current) startReveal(); } else stopHold();
+    }
+  }, [phase, trace, startReveal, startFollow, stopHold]);
 
-  var onUp = useCallback(function() { setTouch(null); tcR.current = null; stopHold(); }, [stopHold]);
+  var onUp = useCallback(function() {
+    setTouch(null); tcR.current = null;
+    var dm = (trR.current && trR.current.discovery_mode) || 'stillness';
+    if (dm === 'follow') { followInProxR.current = false; } else { stopHold(); }
+  }, [stopHold]);
 
   // ── Capture trace at reveal start ──
   useEffect(function() { if (phase === "revealing" && trace) revealTraceR.current = trace; }, [phase, trace]);
@@ -1423,7 +1516,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     soundSend(); hapticSend();
     if (onbStepR.current < 4) setOnbStep(4);
     try {
-      await sendTrace(pair.id, user.id, partnerId, data.path, data.tone);
+      await sendTrace(pair.id, user.id, partnerId, data.path, data.tone, contribs.length === 0);
       setContribs(function(prev) { return prev.concat([{ tone: data.tone, path: data.path }]); });
       setRecTones(function(prev) { return [data.tone].concat(prev).slice(0, 5); });
       setLastTone(data.tone);
@@ -1630,7 +1723,17 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     dNorm = dst(touch.x, touch.y, ep.x, ep.y) / Math.sqrt(2);
   }
   if (trace && TONES[trace.emotional_tone]) trRgb = TONES[trace.emotional_tone].rgb.join(",");
-  var pxL = dNorm < 0.04 ? "hold gently\u2026" : dNorm < 0.14 ? "right here\u2026" : dNorm < 0.30 ? "getting warmer\u2026" : dNorm < 0.55 ? "something faint\u2026" : null;
+  var pxL = null;
+  if (trace && touch) {
+    var _dm = trace.discovery_mode || 'stillness';
+    if (_dm === 'wake') {
+      pxL = dNorm < 0.08 ? "wait for it\u2026" : dNorm < 0.55 ? "something stirs\u2026" : null;
+    } else if (_dm === 'follow') {
+      pxL = dNorm < 0.08 ? "don\u2019t let go\u2026" : dNorm < 0.20 ? "stay close\u2026" : dNorm < 0.55 ? "it\u2019s moving\u2026" : null;
+    } else {
+      pxL = dNorm < 0.04 ? "hold gently\u2026" : dNorm < 0.14 ? "right here\u2026" : dNorm < 0.30 ? "getting warmer\u2026" : dNorm < 0.55 ? "something faint\u2026" : null;
+    }
+  }
   var pxA = dNorm < 0.04 ? 0.8 : dNorm < 0.14 ? 0.6 : dNorm < 0.30 ? 0.4 : dNorm < 0.55 ? 0.22 : 0;
   var mRgb = mTone && TONES[mTone] ? TONES[mTone].rgb.join(",") : "255,255,255";
   var bottomColor = lastTone ? TONES[lastTone].primary : "rgba(255,255,255,0.2)";
@@ -1759,7 +1862,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {/* Status */}
       <div style={{ position:"absolute",top:22,left:0,right:0,textAlign:"center",zIndex:10,pointerEvents:"none",fontFamily:FONT }}>
         {phase === "discovery" && trace ? <div style={{ animation:"fadeIn 1s ease" }}>
-          <span style={{ color:"rgba("+trRgb+",0.65)",fontSize:15,letterSpacing:"0.28em",fontWeight:300,textShadow:"0 0 25px rgba("+trRgb+",0.2)" }}>SOMETHING IS HERE</span>
+          <span style={{ color:"rgba("+trRgb+",0.65)",fontSize:15,letterSpacing:"0.28em",fontWeight:300,textShadow:"0 0 25px rgba("+trRgb+",0.2)" }}>{trace.discovery_mode === 'follow' ? "SOMETHING IS MOVING" : trace.discovery_mode === 'wake' ? "SOMETHING IS STIRRING" : "SOMETHING IS HERE"}</span>
           {onbStep === 0 ? <div style={{ marginTop:6,color:"rgba(255,255,255,0.63)",fontSize:13,letterSpacing:"0.15em",fontWeight:200 }}>someone left something for you</div> : null}
         </div> : null}
 
