@@ -23,6 +23,9 @@ Run these SQL files in order in the Supabase SQL Editor:
 1. `supabase-schema.sql` — tables, RLS policies, core functions
 2. `supabase-migration.sql` — proposals, artwork reset, dissolve, realtime
 3. `supabase-migration-2.sql` — still-here, nudge, turn-based sending, RLS fix
+4. `supabase-migration-3.sql` — automatic inactive pair cleanup (requires pg_cron extension)
+
+For migration 3: enable pg_cron first via Supabase Dashboard → Database → Extensions → pg_cron.
 
 Then configure:
 
@@ -115,9 +118,9 @@ Rare events triggered by specific conditions. Maximum one per reveal, 5-hour coo
 
 **Twin Connection** (highest priority): Both partners sent a trace within 15 minutes of each other. The revealer picks a whisper word from a rotating pool of 25 — the partner receives it as a glowing text overlay.
 
-**Trace Convergence**: The revealed trace overlaps >55% with a recent trace from the partner. The revealer picks an echo mark (symbol) from a pool of 15 — the partner sees it in their space.
+**Trace Convergence**: The revealed trace overlaps >45% with a recent trace from the partner. The revealer picks an echo mark (symbol) from a pool of 15 — the partner sees it in their space.
 
-**Amplified Reveal** (automatic): The revealed gesture was especially intense (>3 seconds, >8 direction changes). No interaction needed — the reveal animation is extended, and the residue echo lasts 3× longer with higher visibility. The partner sees "this trace resonated deeply".
+**Amplified Reveal** (automatic): The revealed gesture was especially intense (>3 seconds, >8 direction changes). No interaction needed — the reveal animation is extended, and the residue echo lasts 3× longer with higher visibility. The discoverer sees "THIS TRACE TOOK TIME". The partner sees "YOUR TRACE REACHED THEM / they stayed with yours".
 
 ---
 
@@ -150,6 +153,8 @@ A planned reunion can be changed (new date) or cancelled from Settings at any ti
 **Start Fresh**: Settings → Start Fresh → partner accepts → all traces and artwork are cleared. Both start building from zero.
 
 **Dissolve Connection**: Settings → Dissolve Connection → permanently ends the pair. All data is deleted. Partner is notified in real-time.
+
+**Draw Together**: After a pair has exchanged at least 6 traces and at least 7 days have passed since the last shared canvas session, a "draw together" invite may appear when the partner is online. One person sends an invite; the partner can accept or decline. If accepted, both draw on a shared real-time canvas simultaneously. The result is saved as an artwork contribution.
 
 ---
 
@@ -211,6 +216,7 @@ resona/
 ├── supabase-schema.sql          Base schema
 ├── supabase-migration.sql       Migration 1: proposals
 ├── supabase-migration-2.sql     Migration 2: events, turn-based, RLS fix
+├── supabase-migration-3.sql     Migration 3: automatic inactive pair cleanup
 ├── index.html                   Dev entry point
 ├── package.json
 └── vite.config.js
@@ -254,3 +260,5 @@ resona/
 | Residue echo duration | 30 / 60 / 120 minutes |
 | Epoch thresholds | 10, 25, 50, 100 traces |
 | Milestones | 1, 10, 25, 50, 100 traces |
+| Inactive pair cleanup | 14 days without any activity |
+| Draw Together unlock | ≥6 traces exchanged, ≥7 days since last session |
