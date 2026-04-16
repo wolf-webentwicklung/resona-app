@@ -1311,7 +1311,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {phase === "discovery" && onbStep <= 1 ? <div style={{ position:"absolute",bottom:70,left:0,right:0,textAlign:"center",zIndex:10,pointerEvents:"none",fontFamily:FONT,animation:"fadeIn 2s ease" }}>
         <div style={{ display:"inline-block",padding:"10px 24px",borderRadius:20,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)" }}>
           <span style={{ color:"rgba(255,255,255,0.4)",fontSize:11,letterSpacing:"0.14em",fontWeight:200 }}>touch the space {"\u00B7"} move slowly {"\u00B7"} find the trace</span></div></div> : null}
-      {phase === "idle" && canSend && (onbStep === 2 || idleT >= 1) ? <div style={{ position:"absolute",bottom:55,left:0,right:0,textAlign:"center",zIndex:10,pointerEvents:"none",fontFamily:FONT,animation:"fadeIn 1.5s ease" }}>
+      {phase === "idle" && canSend && (onbStep === 2 || idleT >= 1) ? <div style={{ position:"absolute",bottom:"calc(65px + env(safe-area-inset-bottom, 0px))",left:0,right:0,textAlign:"center",zIndex:10,pointerEvents:"none",fontFamily:FONT,animation:"fadeIn 1.5s ease" }}>
         <div style={{ display:"inline-block",padding:"8px 20px",borderRadius:16,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)" }}>
           <span style={{ color:"rgba(255,255,255,0.6)",fontSize:10,letterSpacing:"0.14em",fontWeight:200 }}>{"\u2191"} tap the light to send a trace</span></div></div> : null}
 
@@ -1425,8 +1425,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
       {/* Bottom affordance */}
       {phase === "idle" || phase === "discovery" ? (
-        <div style={{ position:"absolute",bottom:0,left:0,right:0,zIndex:10,fontFamily:FONT }}>
-          {canSend ? <div onClick={function() { if (onbStep === 2) setOnbStep(3); setPhase("creating"); }} style={{ height:50,display:"flex",alignItems:"flex-end",justifyContent:"center",cursor:"pointer",paddingBottom:16 }}>
+        <div style={{ position:"absolute",bottom:0,left:0,right:0,zIndex:10,fontFamily:FONT,paddingBottom:"max(16px, env(safe-area-inset-bottom, 16px))" }}>
+          {canSend ? <div onClick={function() { if (onbStep === 2) setOnbStep(3); setPhase("creating"); }} style={{ height:50,display:"flex",alignItems:"flex-end",justifyContent:"center",cursor:"pointer",paddingBottom:8 }}>
             <div style={{ width:"58%",height:3,borderRadius:2,background:"linear-gradient(90deg, transparent, "+bottomColor+", transparent)",animation:"breathe 5s ease-in-out infinite" }} /></div>
           : phase === "idle" && sentTone ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",paddingBottom:20,gap:6 }}>
             <div style={{ width:7,height:7,borderRadius:"50%",background:TONES[sentTone]?TONES[sentTone].primary:"#555",boxShadow:"0 0 16px "+(TONES[sentTone]?TONES[sentTone].primary:"#555")+"77",animation:"gentlePulse 3s ease-in-out infinite" }} />
@@ -1854,28 +1854,50 @@ function ReunionIncoming({ reunion, onRespond }) {
 function ReunionReveal({ contribs, reunion, onDone }) {
   var cvRef = useRef(null);
   var _a = useState(0), al = _a[0], setAl = _a[1];
+  var _done = useState(false), animDone = _done[0], setAnimDone = _done[1];
+
+  // Export artwork helper
+  var saveArtwork = useCallback(function() {
+    if (contribs.length === 0) return;
+    var c = document.createElement("canvas");
+    var size = 1080; c.width = size; c.height = size;
+    var ctx = c.getContext("2d");
+    ctx.fillStyle = "#0A0A12"; ctx.fillRect(0, 0, size, size);
+    drawArtwork(ctx, contribs, size, size, 0.85);
+    ctx.fillStyle = "rgba(255,255,255,0.08)"; ctx.font = "200 14px 'Outfit', sans-serif";
+    ctx.textAlign = "center"; ctx.fillText("resona", size / 2, size - 30);
+    try {
+      var link = document.createElement("a");
+      link.download = "resona-artwork.png";
+      link.href = c.toDataURL("image/png");
+      link.click();
+    } catch (e) {
+      c.toBlob(function(blob) {
+        if (navigator.share && blob) {
+          navigator.share({ files: [new File([blob], "resona-artwork.png", { type: "image/png" })] }).catch(function() {});
+        }
+      });
+    }
+  }, [contribs]);
 
   useEffect(function() {
     soundArtworkReveal(); hapticReveal();
     var c = cvRef.current; if (!c) return;
     var ctx = c.getContext("2d"), dpr = window.devicePixelRatio || 1, rect = c.getBoundingClientRect();
     c.width = rect.width * dpr; c.height = rect.height * dpr; ctx.scale(dpr, dpr);
-    var w = rect.width, h = rect.height, start = Date.now(), dur = 20000, af;
+    var w = rect.width, h = rect.height, start = Date.now(), dur = 12000, af;
 
     function draw() {
       var pr = Math.min(1, (Date.now() - start) / dur);
-      var fi = Math.min(1, pr * 1.5); // slow fade in
-      var fo = pr > 0.8 ? 1 - (pr - 0.8) / 0.2 : 1; // fade out at end
-      var a = fi * fo;
+      var a = Math.min(1, pr * 1.5); // fade in, NO fade out
       setAl(a);
 
       ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = "rgba(6,6,12," + (0.97 * a) + ")";
+      ctx.fillStyle = "rgba(6,6,12,0.97)";
       ctx.fillRect(0, 0, w, h);
 
-      // Reveal radius grows over time
       var maxR = Math.min(w, h) * 0.45;
-      var vr = maxR * Math.min(1, pr * 2); // full size at 50%
+      var vr = maxR * Math.min(1, pr * 2);
       var cx = w / 2, cy = h / 2;
 
       if (vr > 2) {
@@ -1885,7 +1907,6 @@ function ReunionReveal({ contribs, reunion, onDone }) {
         ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
         ctx.restore();
 
-        // Soft edge vignette
         var eg = ctx.createRadialGradient(cx, cy, vr * 0.7, cx, cy, vr * 1.05);
         eg.addColorStop(0, "transparent");
         eg.addColorStop(1, "rgba(6,6,12," + a + ")");
@@ -1893,11 +1914,11 @@ function ReunionReveal({ contribs, reunion, onDone }) {
       }
 
       if (pr < 1) af = requestAnimationFrame(draw);
-      else setTimeout(onDone, 500);
+      else setAnimDone(true); // animation done — show buttons, don't auto-dismiss
     }
     af = requestAnimationFrame(draw);
     return function() { cancelAnimationFrame(af); };
-  }, [contribs, onDone]);
+  }, [contribs]);
 
   var dateStr = reunion && reunion.proposed_date
     ? new Date(reunion.proposed_date + "T00:00:00").toLocaleDateString(undefined, { day:"numeric", month:"long", year:"numeric" })
@@ -1909,9 +1930,15 @@ function ReunionReveal({ contribs, reunion, onDone }) {
       <div style={{ color:"rgba(212,165,116,"+(al*0.3)+")",fontSize:9,letterSpacing:"0.3em",fontWeight:200,marginBottom:6 }}>REUNION</div>
       <div style={{ color:"rgba(255,255,255,"+(al*0.2)+")",fontSize:10,fontWeight:200 }}>{dateStr}</div>
     </div>
-    <div style={{ position:"absolute",bottom:"8%",left:0,right:0,textAlign:"center",zIndex:1,pointerEvents:"none",fontFamily:FONT }}>
+    {animDone ? <div style={{ position:"absolute",bottom:"8%",left:0,right:0,textAlign:"center",zIndex:1,fontFamily:FONT,animation:"fadeIn 1s ease",paddingBottom:"env(safe-area-inset-bottom, 0px)" }}>
+      <div style={{ color:"rgba(255,255,255,0.15)",fontSize:10,letterSpacing:"0.1em",fontWeight:200,marginBottom:20 }}>everything you built together</div>
+      <div style={{ display:"flex",gap:16,justifyContent:"center" }}>
+        <div onClick={saveArtwork} style={{ padding:"12px 28px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.05)",cursor:"pointer",color:"rgba(212,165,116,0.6)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>SAVE</div>
+        <div onClick={onDone} style={{ padding:"12px 28px",borderRadius:24,border:"1px solid rgba(255,255,255,0.08)",cursor:"pointer",color:"rgba(255,255,255,0.45)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>CONTINUE</div>
+      </div>
+    </div> : <div style={{ position:"absolute",bottom:"8%",left:0,right:0,textAlign:"center",zIndex:1,pointerEvents:"none",fontFamily:FONT }}>
       <div style={{ color:"rgba(255,255,255,"+(al*0.15)+")",fontSize:10,letterSpacing:"0.1em",fontWeight:200 }}>everything you built together</div>
-    </div>
+    </div>}
   </div>;
 }
 

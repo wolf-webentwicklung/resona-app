@@ -27,14 +27,22 @@ export function isGuest(user) {
 
 // ── Auth: link email to anonymous account ──
 export async function linkEmail(email) {
-  const { data, error } = await supabase.auth.updateUser({ email: email });
+  var redirectUrl = window.location.origin;
+  const { data, error } = await supabase.auth.updateUser(
+    { email: email },
+    { emailRedirectTo: redirectUrl }
+  );
   if (error) throw error;
   return data;
 }
 
 // ── Auth: sign in with email (magic link) ──
 export async function signInWithEmail(email) {
-  const { data, error } = await supabase.auth.signInWithOtp({ email: email });
+  var redirectUrl = window.location.origin;
+  const { data, error } = await supabase.auth.signInWithOtp({
+    email: email,
+    options: { emailRedirectTo: redirectUrl }
+  });
   if (error) throw error;
   return data;
 }
