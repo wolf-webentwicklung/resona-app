@@ -104,6 +104,15 @@ export async function sendTrace(pairId, senderId, receiverId, path, tone, isFirs
   var tp = toneParams[tone] || { baseRadius: 0.08, preferSignal: null };
   var signals = ['shimmer','pulse','drift','flicker','density','wave'];
   var feel = analyzeGestureFeel(path);
+
+  // Override frontend-passed isFirstTrace with DB truth — avoids stale closure / race condition
+  var { count } = await supabase
+    .from('traces')
+    .select('id', { count: 'exact', head: true })
+    .eq('pair_id', pairId)
+    .eq('sender_id', senderId);
+  isFirstTrace = (count === 0);
+
   var dm = computeDiscoveryMode(tone, feel, isFirstTrace);
 
   // Signal type: mode takes precedence, then tone preference, then random

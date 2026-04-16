@@ -272,7 +272,7 @@ export function analyzeGestureFeel(path) {
     totalDist += Math.sqrt(dx * dx + dy * dy);
     if (i > 1) {
       var pdx = path[i-1].x - path[i-2].x, pdy = path[i-1].y - path[i-2].y;
-      if (Math.abs(pdx * dy - pdy * dx) > 0.0006) dirChanges++;
+      if (Math.abs(pdx * dy - pdy * dx) > 0.00005) dirChanges++;
     }
   }
   var avgSpeed = dur > 0 ? totalDist / (dur / 1000) : 0.5;
@@ -343,10 +343,10 @@ export function computeDiscoveryMode(tone, feel, isFirstTrace) {
   if (tone === 'playfulness') return 'follow';
 
   if (tone === 'longing' || tone === 'tension') {
-    if (feel.duration > 2000 || feel.intensity > 0.45) return 'wake';
+    if (feel.duration > 1500 || feel.intensity > 0.35) return 'wake';
   }
 
-  if (feel.speed > 0.7 && feel.complexity > 0.5 && tone !== 'nearness' && tone !== 'warmth') {
+  if (feel.speed > 0.5 && feel.complexity > 0.3 && tone !== 'nearness' && tone !== 'warmth') {
     return 'follow';
   }
 
