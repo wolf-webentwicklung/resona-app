@@ -586,6 +586,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   // ── Idle touch ripples ──
   var idleTouchesR = useRef([]);
+  var idlePointerDownR = useRef(false);
 
   // ── Artwork bleed cache ──
   var bleedCacheR = useRef(null);
@@ -1111,8 +1112,6 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       if (ph === "discovery" && tr) {
         var tone = tr.emotional_tone;
         // ── Gesture Feel (Hebel 1) ──
-        var dMod = getDiscoveryMod(tr.gesture_data);
-        // Gesture feel modifies visual intensity, not timing
         // Playfulness drift: reveal position slowly moves in a circle
         var baseX = tr.reveal_position.x, baseY = tr.reveal_position.y;
         var driftSpd = tr.reveal_position.drift_speed || 0;
@@ -1127,7 +1126,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         effectiveRevealPosR.current = { x: baseX, y: baseY };
         var td = TONES[tone];
         var cr3 = td ? td.rgb[0] : 180, cg3 = td ? td.rgb[1] : 180, cb3 = td ? td.rgb[2] : 220;
-        var sig = tr.signal_type, sp = (0.5 + Math.sin(t*2) * 0.3) * dMod.signalAlpha;
+        var sig = tr.signal_type, sp = 0.5 + Math.sin(t*2) * 0.3;
 
         // Signal rendering
         if (sig === "shimmer") { for (var si = 0; si < 20; si++) { var sx = n1(si*7.3+t*0.3,t*0.2+si)*0.5+0.5, sy = n1(si*5.1+t*0.25,t*0.15+si+50)*0.5+0.5; ctx.fillStyle = "rgba("+cr3+","+cg3+","+cb3+","+(sp*(0.04+Math.sin(t*3+si*1.3)*0.03))+")"; ctx.beginPath(); ctx.arc(sx*w,sy*h,2.5,0,Math.PI*2); ctx.fill(); } }
@@ -1198,7 +1197,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
   var lastProxZone = useRef(-1);
   var onDown = useCallback(function(ev) {
     var r = ev.currentTarget.getBoundingClientRect(), x = (ev.clientX-r.left)/r.width, y = (ev.clientY-r.top)/r.height;
-    if (phase === "idle" && y < 0.7) { idleTouchesR.current.push({ x:x, y:y, t:Date.now() }); if (idleTouchesR.current.length > RIPPLE_MAX_POINTS) idleTouchesR.current.shift(); }
+    if (phase === "idle" && y < 0.7) { idlePointerDownR.current = true; idleTouchesR.current.push({ x:x, y:y, t:Date.now() }); if (idleTouchesR.current.length > RIPPLE_MAX_POINTS) idleTouchesR.current.shift(); }
     if (phase !== "discovery" || !trace) return;
     setTouch({ x, y }); tcR.current = { x, y }; hapticTap();
     var ep = effectiveRevealPosR.current || trace.reveal_position;
@@ -1207,7 +1206,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   var onMove = useCallback(function(ev) {
     var r = ev.currentTarget.getBoundingClientRect(), x = (ev.clientX-r.left)/r.width, y = (ev.clientY-r.top)/r.height;
-    if (phase === "idle" && y < 0.7) { idleTouchesR.current.push({ x:x, y:y, t:Date.now() }); if (idleTouchesR.current.length > RIPPLE_MAX_POINTS) idleTouchesR.current.shift(); }
+    if (phase === "idle" && y < 0.7 && idlePointerDownR.current) { idleTouchesR.current.push({ x:x, y:y, t:Date.now() }); if (idleTouchesR.current.length > RIPPLE_MAX_POINTS) idleTouchesR.current.shift(); }
     if (phase !== "discovery" || !trace) return;
     setTouch({ x, y }); tcR.current = { x, y };
     var ep = effectiveRevealPosR.current || trace.reveal_position;
@@ -1218,7 +1217,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     if (d < (trace.search_radius || 0.08)) { if (!holdRef.current) startHold(); } else stopHold();
   }, [phase, trace, startHold, stopHold]);
 
-  var onUp = useCallback(function() { setTouch(null); tcR.current = null; stopHold(); }, [stopHold]);
+  var onUp = useCallback(function() { setTouch(null); tcR.current = null; stopHold(); idlePointerDownR.current = false; }, [stopHold]);
 
   // ── Capture trace at reveal start ──
   useEffect(function() { if (phase === "revealing" && trace) revealTraceR.current = trace; }, [phase, trace]);
@@ -1235,6 +1234,9 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       console.error("Discover error:", e);
       setAppError("Failed to save. Check your connection.");
     }
+    // Clear sent state - this trace was FROM our partner, we can send next
+    setSentTone(null); setSentAt(null); setNudgeReady(false); setNudgeSent(false);
+    setTurnWaiting(false); setTurnNudgeReady(false); setTurnNudgeSent(false);
 
     var path = tr.gesture_data.path;
     // Add to echoes array (max MAX_ECHOES)
