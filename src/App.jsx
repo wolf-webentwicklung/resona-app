@@ -99,18 +99,165 @@ function Welcome({ onStart, onSignIn }) {
         <span style={{ color:"rgba(255,255,255,0.5)",fontSize:12,letterSpacing:"0.2em",fontWeight:200 }}>BEGIN</span>
       </div>
       <div onClick={function(ev) { ev.stopPropagation(); onSignIn(); }} style={{ position:"relative",zIndex:1,marginTop:24,cursor:"pointer",padding:"8px 16px" }}>
-        <span style={{ color:"rgba(255,255,255,0.25)",fontSize:12,letterSpacing:"0.1em",fontWeight:200 }}>already have an account?</span>
+        <span style={{ color:"rgba(255,255,255,0.4)",fontSize:12,letterSpacing:"0.1em",fontWeight:200 }}>already have an account?</span>
       </div>
     </div>
   );
 }
 
 // ══════════════════════════════════════
-// ONBOARDING — brief explanation
+// ONBOARDING — animated visual explanation
 // ══════════════════════════════════════
+function OnboardingAnim({ step, w, h, ctx }) {
+  // Step 0: "draw what you feel" — a trace being drawn with tone color
+  if (step === 0) {
+    return function(t) {
+      var colors = [
+        { r: 212, g: 165, b: 116 }, // nearness
+        { r: 107, g: 82, b: 196 },  // longing
+        { r: 0, g: 180, b: 216 },   // playfulness
+      ];
+      var col = colors[Math.floor(t * 0.15) % colors.length];
+      var rgb = col.r + "," + col.g + "," + col.b;
+      var cx = w / 2, cy = h * 0.35;
+      // Animated trace path
+      var progress = (t * 0.4) % 4; // 0-4 cycle
+      var drawProg = Math.min(1, progress);
+      var fadeProg = progress > 2.5 ? (progress - 2.5) / 1.5 : 0;
+      var alpha = (1 - fadeProg) * 0.6;
+      if (alpha < 0.01) return;
+      var pts = [];
+      for (var i = 0; i <= 40; i++) {
+        var p = i / 40;
+        if (p > drawProg) break;
+        var angle = p * Math.PI * 1.8 - 0.3;
+        var radius = 30 + p * 45 + Math.sin(p * 5) * 12;
+        pts.push({ x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius * 0.7 });
+      }
+      if (pts.length < 2) return;
+      // Glow
+      ctx.globalAlpha = alpha * 0.3;
+      ctx.globalCompositeOperation = "screen";
+      ctx.beginPath(); ctx.strokeStyle = "rgba(" + rgb + ",0.5)"; ctx.lineWidth = 16; ctx.lineCap = "round"; ctx.lineJoin = "round";
+      pts.forEach(function(pt, i) { i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y); }); ctx.stroke();
+      // Core
+      ctx.beginPath(); ctx.strokeStyle = "rgba(" + rgb + ",0.8)"; ctx.lineWidth = 3;
+      pts.forEach(function(pt, i) { i === 0 ? ctx.moveTo(pt.x, pt.y) : ctx.lineTo(pt.x, pt.y); }); ctx.stroke();
+      // Cursor dot at tip
+      if (pts.length > 0 && drawProg < 1) {
+        var tip = pts[pts.length - 1];
+        var grd = ctx.createRadialGradient(tip.x, tip.y, 0, tip.x, tip.y, 20);
+        grd.addColorStop(0, "rgba(" + rgb + "," + (alpha * 0.7) + ")"); grd.addColorStop(1, "transparent");
+        ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(tip.x, tip.y, 20, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+      // Tone circles hint at bottom
+      var toneColors = ["#D4A574", "#6B52C4", "#C41E3A", "#E07A5F", "#00B4D8"];
+      toneColors.forEach(function(c, i) {
+        var tx = w / 2 + (i - 2) * 28, ty = h * 0.58;
+        ctx.globalAlpha = 0.15 + (Math.floor(t * 0.15) % 5 === i ? 0.2 : 0);
+        ctx.fillStyle = c; ctx.beginPath(); ctx.arc(tx, ty, 8, 0, Math.PI * 2); ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+    };
+  }
+  // Step 1: "your person discovers it" — searching glow finding a hidden point
+  if (step === 1) {
+    return function(t) {
+      var cycle = (t * 0.3) % 5;
+      var targetX = w * 0.55, targetY = h * 0.32;
+      // Searching finger position — spirals toward target
+      var searchProgress = Math.min(1, cycle / 3);
+      var sx = w * 0.3 + (targetX - w * 0.3) * searchProgress + Math.sin(t * 1.2) * (1 - searchProgress) * 60;
+      var sy = h * 0.5 + (targetY - h * 0.5) * searchProgress + Math.cos(t * 0.9) * (1 - searchProgress) * 40;
+      var dist = Math.sqrt((sx - targetX) * (sx - targetX) + (sy - targetY) * (sy - targetY));
+      var maxDist = 150;
+      var proximity = Math.max(0, 1 - dist / maxDist);
+      // Background proximity glow
+      if (proximity > 0.1) {
+        ctx.globalAlpha = proximity * 0.25; ctx.globalCompositeOperation = "screen";
+        var grd = ctx.createRadialGradient(sx, sy, 0, sx, sy, 50 + proximity * 80);
+        grd.addColorStop(0, "rgba(212,165,116,0.6)"); grd.addColorStop(1, "transparent");
+        ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(sx, sy, 50 + proximity * 80, 0, Math.PI * 2); ctx.fill();
+      }
+      // Connection line when close
+      if (proximity > 0.5) {
+        ctx.globalAlpha = (proximity - 0.5) * 0.3; ctx.strokeStyle = "rgba(212,165,116,0.4)"; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(targetX, targetY); ctx.stroke();
+      }
+      // Hold ring when very close
+      if (cycle > 3 && cycle < 4.5) {
+        var holdProg = (cycle - 3) / 1.5;
+        ctx.globalAlpha = 0.5; ctx.strokeStyle = "rgba(212,165,116,0.6)"; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(targetX, targetY, 24, -Math.PI / 2, -Math.PI / 2 + holdProg * Math.PI * 2); ctx.stroke();
+        var ig = ctx.createRadialGradient(targetX, targetY, 0, targetX, targetY, 18);
+        ig.addColorStop(0, "rgba(212,165,116," + (holdProg * 0.4) + ")"); ig.addColorStop(1, "transparent");
+        ctx.fillStyle = ig; ctx.beginPath(); ctx.arc(targetX, targetY, 18, 0, Math.PI * 2); ctx.fill();
+      }
+      // Reveal flash
+      if (cycle > 4.5) {
+        var revealA = 1 - (cycle - 4.5) / 0.5;
+        ctx.globalAlpha = revealA * 0.4; ctx.globalCompositeOperation = "screen";
+        var rg = ctx.createRadialGradient(targetX, targetY, 0, targetX, targetY, 80);
+        rg.addColorStop(0, "rgba(212,165,116,0.8)"); rg.addColorStop(1, "transparent");
+        ctx.fillStyle = rg; ctx.beginPath(); ctx.arc(targetX, targetY, 80, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+    };
+  }
+  // Step 2: "something grows between you" — traces accumulating into artwork
+  if (step === 2) {
+    return function(t) {
+      var tones = [
+        { rgb: "212,165,116", cols: ["#D4A574", "#E8C99B"] },
+        { rgb: "107,82,196", cols: ["#4A3198", "#6B52C4"] },
+        { rgb: "224,122,95", cols: ["#E07A5F", "#F2CC8F"] },
+        { rgb: "0,180,216", cols: ["#00B4D8", "#48D1E8"] },
+        { rgb: "196,30,58", cols: ["#C41E3A", "#E03E5A"] },
+      ];
+      var cx = w / 2, cy = h * 0.35;
+      var numTraces = Math.min(5, Math.floor(t * 0.5) + 1);
+      var clipR = Math.min(w, h) * 0.22;
+      // Vignette circle
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, clipR, 0, Math.PI * 2); ctx.clip();
+      // Draw accumulated traces
+      for (var i = 0; i < numTraces; i++) {
+        var tone = tones[i % tones.length];
+        var age = (numTraces - i) / numTraces;
+        var alpha = 0.2 + age * 0.4;
+        var offA = i * 1.3 + 0.5;
+        ctx.globalAlpha = alpha; ctx.globalCompositeOperation = "screen";
+        ctx.beginPath();
+        ctx.strokeStyle = tone.cols[0]; ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.lineJoin = "round";
+        for (var j = 0; j <= 30; j++) {
+          var p = j / 30;
+          var angle = p * Math.PI * (1.2 + i * 0.4) + offA;
+          var radius = 15 + p * (clipR * 0.7) + Math.sin(p * 4 + i) * 10;
+          var px = cx + Math.cos(angle + i * 0.8) * radius * (0.6 + Math.sin(i * 1.1) * 0.3);
+          var py = cy + Math.sin(angle + i * 0.8) * radius * 0.5;
+          j === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        // Glow
+        ctx.strokeStyle = tone.cols[1] + "33"; ctx.lineWidth = 12;
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+      ctx.restore();
+      // Soft vignette edge
+      var eg = ctx.createRadialGradient(cx, cy, clipR * 0.7, cx, cy, clipR * 1.15);
+      eg.addColorStop(0, "transparent"); eg.addColorStop(1, "#0A0A12");
+      ctx.fillStyle = eg; ctx.fillRect(0, 0, w, h);
+    };
+  }
+  return function() {};
+}
+
 function Onboarding({ onDone }) {
   var _s = useState(0), step = _s[0], setStep = _s[1];
   var _a = useState(0), al = _a[0], setAl = _a[1];
+  var cvRef = useRef(null);
 
   var steps = [
     { title: "draw what you feel", body: "choose an emotional tone\nand draw a gesture with your finger" },
@@ -124,6 +271,25 @@ function Onboarding({ onDone }) {
     return function() { clearTimeout(t); };
   }, [step]);
 
+  // Canvas animation
+  useEffect(function() {
+    var c = cvRef.current; if (!c) return;
+    var ctx = c.getContext("2d"), dpr = window.devicePixelRatio || 1;
+    var rect = c.getBoundingClientRect();
+    c.width = rect.width * dpr; c.height = rect.height * dpr; ctx.scale(dpr, dpr);
+    var w = rect.width, h = rect.height;
+    var drawFn = OnboardingAnim({ step: step, w: w, h: h, ctx: ctx });
+    var start = Date.now(), af;
+    function frame() {
+      var t = (Date.now() - start) / 1000;
+      ctx.clearRect(0, 0, w, h);
+      drawFn(t);
+      af = requestAnimationFrame(frame);
+    }
+    af = requestAnimationFrame(frame);
+    return function() { cancelAnimationFrame(af); };
+  }, [step]);
+
   var advance = function() {
     setAl(0);
     setTimeout(function() {
@@ -134,14 +300,16 @@ function Onboarding({ onDone }) {
 
   var s = steps[step];
   return (
-    <div onClick={advance} style={{ position:"absolute",inset:0,zIndex:50,background:"#0A0A12",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,cursor:"pointer",opacity:al,transition:"opacity 0.4s ease" }}>
-      <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(255,255,255,0.3)",marginBottom:40 }} />
-      <div style={{ fontSize:17,fontWeight:200,letterSpacing:"0.2em",color:"rgba(255,255,255,0.55)",marginBottom:20,textAlign:"center" }}>{s.title}</div>
-      <div style={{ fontSize:14,fontWeight:200,letterSpacing:"0.08em",color:"rgba(255,255,255,0.6)",textAlign:"center",lineHeight:2,whiteSpace:"pre-line" }}>{s.body}</div>
+    <div onClick={advance} style={{ position:"absolute",inset:0,zIndex:50,background:"#0A0A12",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-end",fontFamily:FONT,cursor:"pointer",opacity:al,transition:"opacity 0.4s ease" }}>
+      <canvas ref={cvRef} style={{ position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none" }} />
+      <div style={{ position:"relative",zIndex:1,marginBottom:100,textAlign:"center",padding:"0 30px" }}>
+        <div style={{ fontSize:17,fontWeight:200,letterSpacing:"0.2em",color:"rgba(255,255,255,0.6)",marginBottom:16 }}>{s.title}</div>
+        <div style={{ fontSize:14,fontWeight:200,letterSpacing:"0.08em",color:"rgba(255,255,255,0.5)",lineHeight:2,whiteSpace:"pre-line" }}>{s.body}</div>
+      </div>
       <div style={{ position:"absolute",bottom:60,display:"flex",gap:8 }}>
         {steps.map(function(_, i) { return <div key={i} style={{ width:i===step?16:4,height:4,borderRadius:2,background:i===step?"rgba(255,255,255,0.25)":"rgba(255,255,255,0.08)",transition:"all 0.3s" }} />; })}
       </div>
-      <div style={{ position:"absolute",bottom:30,color:"rgba(255,255,255,0.5)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>{step < steps.length - 1 ? "tap to continue" : "tap to start"}</div>
+      <div style={{ position:"absolute",bottom:30,color:"rgba(255,255,255,0.5)",fontSize:13,letterSpacing:"0.15em",fontWeight:200 }}>{step < steps.length - 1 ? "tap to continue" : "tap to start"}</div>
     </div>
   );
 }
@@ -216,7 +384,7 @@ function PairSetup({ onPaired, userId }) {
       {err ? <div style={{ color:"rgba(196,30,58,0.6)",fontSize:12,marginBottom:20,letterSpacing:"0.1em" }}>{err}</div> : null}
       {mode === "choose" ? (
         <div style={{ display:"flex",flexDirection:"column",gap:20,alignItems:"center" }}>
-          <div style={{ color:"rgba(255,255,255,0.55)",fontSize:11,letterSpacing:"0.2em",fontWeight:200,marginBottom:10 }}>CONNECT WITH YOUR PERSON</div>
+          <div style={{ color:"rgba(255,255,255,0.55)",fontSize:13,letterSpacing:"0.2em",fontWeight:200,marginBottom:10 }}>CONNECT WITH YOUR PERSON</div>
           <div onClick={handleCreate} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.03)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:13,letterSpacing:"0.18em",fontWeight:200 }}>CREATE INVITE</div>
           <div onClick={function() { setMode("join"); }} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.03)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:13,letterSpacing:"0.18em",fontWeight:200 }}>ENTER CODE</div>
         </div>
@@ -224,7 +392,7 @@ function PairSetup({ onPaired, userId }) {
         <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:20 }}>
           <div style={{ color:"rgba(255,255,255,0.5)",fontSize:12,letterSpacing:"0.2em",fontWeight:200 }}>SHARE THIS CODE</div>
           <div onClick={function() { try { navigator.clipboard.writeText(invite); } catch(e) {} }} style={{ fontSize:32,fontWeight:300,letterSpacing:"0.4em",color:"rgba(255,255,255,0.6)",padding:"16px 32px",borderRadius:12,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",cursor:"pointer" }}>{invite}</div>
-          <div style={{ color:"rgba(255,255,255,0.4)",fontSize:11,fontWeight:200 }}>tap code to copy</div>
+          <div style={{ color:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:200 }}>tap code to copy</div>
           <div onClick={function() {
             var url = window.location.origin + "?code=" + invite;
             if (navigator.share) {
@@ -232,10 +400,10 @@ function PairSetup({ onPaired, userId }) {
             } else {
               try { navigator.clipboard.writeText(url); } catch(e) {}
             }
-          }} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.05)",cursor:"pointer",color:"rgba(212,165,116,0.7)",fontSize:11,letterSpacing:"0.15em",fontWeight:300 }}>
+          }} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.05)",cursor:"pointer",color:"rgba(212,165,116,0.7)",fontSize:13,letterSpacing:"0.15em",fontWeight:300 }}>
             INVITE YOUR PERSON
           </div>
-          <div style={{ color:"rgba(255,255,255,0.55)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>waiting for your person to join{"\u2026"}</div>
+          <div style={{ color:"rgba(255,255,255,0.55)",fontSize:13,letterSpacing:"0.15em",fontWeight:200 }}>waiting for your person to join{"\u2026"}</div>
           <div style={{ width:4,height:4,borderRadius:"50%",background:"rgba(255,255,255,0.2)",animation:"gentlePulse 2s ease infinite",marginTop:6 }}/>
         </div>
       ) : (
@@ -1182,7 +1350,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {/* Dissolved by partner overlay */}
       {dissolved ? <div style={{ position:"absolute",inset:0,zIndex:70,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 1s ease" }}>
         <div style={{ width:3,height:3,borderRadius:"50%",background:"rgba(255,255,255,0.3)",marginBottom:24 }} />
-        <div style={{ color:"rgba(255,255,255,0.5)",fontSize:11,letterSpacing:"0.2em",fontWeight:200,marginBottom:12 }}>CONNECTION DISSOLVED</div>
+        <div style={{ color:"rgba(255,255,255,0.5)",fontSize:13,letterSpacing:"0.2em",fontWeight:200,marginBottom:12 }}>CONNECTION DISSOLVED</div>
         <div style={{ color:"rgba(255,255,255,0.6)",fontSize:12,letterSpacing:"0.08em",fontWeight:200,lineHeight:1.8,textAlign:"center",marginBottom:40 }}>your person ended the connection</div>
         <div onClick={function() { window.location.reload(); }} style={{ padding:"14px 40px",borderRadius:24,border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.03)",cursor:"pointer",color:"rgba(255,255,255,0.4)",fontSize:12,letterSpacing:"0.18em",fontWeight:200 }}>START OVER</div>
       </div> : null}
@@ -1200,7 +1368,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
             <div style={{ width:7,height:7,borderRadius:"50%",background:"rgba(212,165,116,0.7)",boxShadow:"0 0 12px rgba(212,165,116,0.4)",animation:"gentlePulse 3s ease infinite" }} />
             <span style={{ color:"rgba(212,165,116,0.5)",fontSize:12,letterSpacing:"0.12em",fontWeight:200 }}>here</span>
           </div> : null}
-          {dayCount > 1 && !partnerHere ? <span style={{ color:"rgba(255,255,255,0.6)",fontSize:11,letterSpacing:"0.1em",fontWeight:200 }}>day {dayCount}</span> : null}
+          {dayCount > 1 && !partnerHere ? <span style={{ color:"rgba(255,255,255,0.6)",fontSize:13,letterSpacing:"0.1em",fontWeight:200 }}>day {dayCount}</span> : null}
         </div>
         <div onClick={function() { setShowSettings(true); }} style={{ cursor:"pointer",opacity:0.25,fontSize:18,color:"white",pointerEvents:"auto" }}>{"\u2699"}</div>
       </div> : null}
@@ -1208,14 +1376,14 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         <div style={{ position:"absolute",inset:0,background:"rgba(0,0,0,0.5)" }} />
         <div onClick={function(ev) { ev.stopPropagation(); }} style={{ position:"relative",width:"100%",maxWidth:400,background:"#111118",borderRadius:"20px 20px 0 0",padding:"28px 24px 40px",fontFamily:FONT }}>
           <div style={{ width:32,height:3,borderRadius:2,background:"rgba(255,255,255,0.15)",margin:"0 auto 24px" }} />
-          <div style={{ color:"rgba(255,255,255,0.4)",fontSize:11,letterSpacing:"0.25em",fontWeight:200,marginBottom:20 }}>SETTINGS</div>
+          <div style={{ color:"rgba(255,255,255,0.4)",fontSize:13,letterSpacing:"0.25em",fontWeight:200,marginBottom:20 }}>SETTINGS</div>
           <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16 }}>
-            <div style={{ color:"rgba(255,255,255,0.5)",fontSize:12,letterSpacing:"0.08em",fontWeight:200 }}>
+            <div style={{ color:"rgba(255,255,255,0.5)",fontSize:14,letterSpacing:"0.08em",fontWeight:200 }}>
               Connected{dayCount > 1 ? " \u00B7 day " + dayCount : ""}
             </div>
             {partnerHere ? <div style={{ display:"flex",alignItems:"center",gap:6 }}>
               <div style={{ width:5,height:5,borderRadius:"50%",background:"rgba(212,165,116,0.6)" }} />
-              <span style={{ color:"rgba(212,165,116,0.5)",fontSize:11,fontWeight:200 }}>here now</span>
+              <span style={{ color:"rgba(212,165,116,0.5)",fontSize:13,fontWeight:200 }}>here now</span>
             </div> : null}
           </div>
 
@@ -1225,15 +1393,15 @@ function ResonanceSpace({ user, pair, onDissolve }) {
               <div>
                 <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:8 }}>
                   <div style={{ width:6,height:6,borderRadius:"50%",background:"rgba(224,122,95,0.5)" }} />
-                  <span style={{ color:"rgba(224,122,95,0.6)",fontSize:12,fontWeight:300 }}>Guest Mode</span>
+                  <span style={{ color:"rgba(224,122,95,0.6)",fontSize:14,fontWeight:300 }}>Guest Mode</span>
                 </div>
-                <div style={{ color:"rgba(255,255,255,0.4)",fontSize:11,fontWeight:200,lineHeight:1.6,marginBottom:12 }}>Your account is tied to this device. If you clear your browser data, you lose access.</div>
-                <div onClick={function() { setShowSettings(false); setShowEmail(true); }} style={{ color:"rgba(212,165,116,0.7)",fontSize:11,fontWeight:300,letterSpacing:"0.08em",cursor:"pointer" }}>Secure with Email</div>
+                <div style={{ color:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:200,lineHeight:1.6,marginBottom:12 }}>Your account is tied to this device. If you clear your browser data, you lose access.</div>
+                <div onClick={function() { setShowSettings(false); setShowEmail(true); }} style={{ color:"rgba(212,165,116,0.7)",fontSize:14,fontWeight:300,letterSpacing:"0.08em",cursor:"pointer" }}>Secure with Email</div>
               </div>
             ) : (
               <div style={{ display:"flex",alignItems:"center",gap:8 }}>
                 <div style={{ width:6,height:6,borderRadius:"50%",background:"rgba(100,200,100,0.5)" }} />
-                <span style={{ color:"rgba(255,255,255,0.45)",fontSize:12,fontWeight:200 }}>{user.email}</span>
+                <span style={{ color:"rgba(255,255,255,0.45)",fontSize:14,fontWeight:200 }}>{user.email}</span>
               </div>
             )}
           </div>
@@ -1241,15 +1409,21 @@ function ResonanceSpace({ user, pair, onDissolve }) {
           {/* Reunion */}
           <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.06)" }}>
             {reunion && reunion.type === "reunion" && reunion.status === "accepted" ? (
-              <div style={{ color:"rgba(212,165,116,0.7)",fontSize:11,fontWeight:300,letterSpacing:"0.1em" }}>
-                Reunion: {new Date(reunion.proposed_date + "T00:00:00").toLocaleDateString(undefined, { day:"numeric",month:"long" })}
+              <div>
+                <div style={{ color:"rgba(212,165,116,0.7)",fontSize:14,fontWeight:300,letterSpacing:"0.1em",marginBottom:8 }}>
+                  Reunion: {new Date(reunion.proposed_date + "T00:00:00").toLocaleDateString(undefined, { day:"numeric",month:"long" })}
+                </div>
+                <div onClick={function() { respondToProposal(reunion.id, false).then(function() { setReunion(null); setShowSettings(false); setReunionUI("propose"); }).catch(function(){}); }} style={{ color:"rgba(255,255,255,0.35)",fontSize:12,fontWeight:200,cursor:"pointer" }}>change date</div>
               </div>
             ) : reunion && reunion.type === "reunion" && reunion.status === "pending" && reunion.proposed_by === user.id ? (
-              <div style={{ color:"rgba(255,255,255,0.6)",fontSize:11,fontWeight:200,letterSpacing:"0.1em" }}>
-                Waiting for your person to accept{"\u2026"}
+              <div>
+                <div style={{ color:"rgba(255,255,255,0.6)",fontSize:14,fontWeight:200,letterSpacing:"0.1em",marginBottom:8 }}>
+                  Waiting for your person to accept{"\u2026"}
+                </div>
+                <div onClick={function() { respondToProposal(reunion.id, false).then(function() { setReunion(null); }).catch(function(){}); }} style={{ color:"rgba(255,255,255,0.35)",fontSize:12,fontWeight:200,cursor:"pointer" }}>cancel</div>
               </div>
             ) : (
-              <div onClick={function() { setShowSettings(false); setReunionUI("propose"); }} style={{ color:"rgba(212,165,116,0.7)",fontSize:11,fontWeight:300,letterSpacing:"0.1em",cursor:"pointer" }}>
+              <div onClick={function() { setShowSettings(false); setReunionUI("propose"); }} style={{ color:"rgba(212,165,116,0.7)",fontSize:14,fontWeight:300,letterSpacing:"0.1em",cursor:"pointer" }}>
                 Plan a Reunion
               </div>
             )}
@@ -1257,30 +1431,23 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
           {/* Reveal Artwork */}
           {contribs.length > 0 ? <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.06)" }}>
-            <div onClick={function() { setShowSettings(false); setReunionUI("confirm_reveal"); }} style={{ color:"rgba(212,165,116,0.7)",fontSize:11,fontWeight:300,letterSpacing:"0.1em",cursor:"pointer" }}>
+            <div onClick={function() { setShowSettings(false); setReunionUI("confirm_reveal"); }} style={{ color:"rgba(212,165,116,0.7)",fontSize:14,fontWeight:300,letterSpacing:"0.1em",cursor:"pointer" }}>
               Reveal Artwork
             </div>
-            <div style={{ color:"rgba(255,255,255,0.45)",fontSize:11,fontWeight:200,marginTop:6 }}>see what you created together</div>
+            <div style={{ color:"rgba(255,255,255,0.45)",fontSize:12,fontWeight:200,marginTop:6 }}>see what you created together</div>
           </div> : null}
 
           {/* Start Fresh */}
           {contribs.length > 0 ? <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.06)" }}>
-            <div onClick={function() { setShowSettings(false); setReunionUI("confirm_reset"); }} style={{ color:"rgba(255,255,255,0.45)",fontSize:11,fontWeight:200,letterSpacing:"0.1em",cursor:"pointer" }}>
+            <div onClick={function() { setShowSettings(false); setReunionUI("confirm_reset"); }} style={{ color:"rgba(255,255,255,0.45)",fontSize:14,fontWeight:200,letterSpacing:"0.1em",cursor:"pointer" }}>
               Start Fresh
             </div>
-            <div style={{ color:"rgba(255,255,255,0.45)",fontSize:11,fontWeight:200,marginTop:6 }}>both need to agree · artwork will be cleared</div>
-          </div> : null}
-
-          {/* Export Artwork */}
-          {contribs.length > 0 ? <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.06)" }}>
-            <div onClick={function() { setShowSettings(false); exportArtwork(); }} style={{ color:"rgba(255,255,255,0.45)",fontSize:11,fontWeight:200,letterSpacing:"0.1em",cursor:"pointer" }}>
-              Save Artwork as Image
-            </div>
+            <div style={{ color:"rgba(255,255,255,0.45)",fontSize:12,fontWeight:200,marginTop:6 }}>both need to agree · artwork will be cleared</div>
           </div> : null}
 
           {/* Dissolve */}
           <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.06)" }}>
-            <div onClick={function() { if (confirm("Dissolve this connection? This cannot be undone.")) { setShowSettings(false); onDissolve(); } }} style={{ color:"rgba(196,30,58,0.6)",fontSize:11,fontWeight:200,letterSpacing:"0.1em",cursor:"pointer" }}>Dissolve Connection</div>
+            <div onClick={function() { if (confirm("Dissolve this connection? This cannot be undone.")) { setShowSettings(false); onDissolve(); } }} style={{ color:"rgba(196,30,58,0.6)",fontSize:14,fontWeight:200,letterSpacing:"0.1em",cursor:"pointer" }}>Dissolve Connection</div>
           </div>
         </div>
       </div> : null}
@@ -1289,7 +1456,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       <div style={{ position:"absolute",top:22,left:0,right:0,textAlign:"center",zIndex:10,pointerEvents:"none",fontFamily:FONT }}>
         {phase === "discovery" && trace ? <div style={{ animation:"fadeIn 1s ease" }}>
           <span style={{ color:"rgba("+trRgb+",0.65)",fontSize:15,letterSpacing:"0.28em",fontWeight:300,textShadow:"0 0 25px rgba("+trRgb+",0.2)" }}>SOMETHING IS HERE</span>
-          {onbStep === 0 ? <div style={{ marginTop:6,color:"rgba(255,255,255,0.55)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>someone left something for you</div> : null}
+          {onbStep === 0 ? <div style={{ marginTop:6,color:"rgba(255,255,255,0.55)",fontSize:13,letterSpacing:"0.15em",fontWeight:200 }}>someone left something for you</div> : null}
         </div> : null}
 
         {/* Idle status indicator */}
@@ -1301,7 +1468,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
       {/* Passive reveal notice */}
       {passiveNotice ? <div style={{ position:"absolute",top:"40%",left:0,right:0,textAlign:"center",zIndex:15,pointerEvents:"none",fontFamily:FONT,animation:"fadeIn 0.8s ease" }}>
-        <span style={{ color:"rgba(255,255,255,0.55)",fontSize:11,letterSpacing:"0.2em",fontWeight:200 }}>revealing itself{"\u2026"}</span>
+        <span style={{ color:"rgba(255,255,255,0.55)",fontSize:13,letterSpacing:"0.2em",fontWeight:200 }}>revealing itself{"\u2026"}</span>
       </div> : null}
 
       {/* Proximity label */}
@@ -1310,10 +1477,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {/* Onboarding hints */}
       {phase === "discovery" && onbStep <= 1 ? <div style={{ position:"absolute",bottom:70,left:0,right:0,textAlign:"center",zIndex:10,pointerEvents:"none",fontFamily:FONT,animation:"fadeIn 2s ease" }}>
         <div style={{ display:"inline-block",padding:"10px 24px",borderRadius:20,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)" }}>
-          <span style={{ color:"rgba(255,255,255,0.4)",fontSize:11,letterSpacing:"0.14em",fontWeight:200 }}>touch the space {"\u00B7"} move slowly {"\u00B7"} find the trace</span></div></div> : null}
-      {phase === "idle" && canSend && (onbStep === 2 || idleT >= 1) ? <div style={{ position:"absolute",bottom:"calc(65px + env(safe-area-inset-bottom, 0px))",left:0,right:0,textAlign:"center",zIndex:10,pointerEvents:"none",fontFamily:FONT,animation:"fadeIn 1.5s ease" }}>
-        <div style={{ display:"inline-block",padding:"8px 20px",borderRadius:16,background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.08)" }}>
-          <span style={{ color:"rgba(255,255,255,0.6)",fontSize:12,letterSpacing:"0.14em",fontWeight:200 }}>tap the circle to send a trace</span></div></div> : null}
+          <span style={{ color:"rgba(255,255,255,0.4)",fontSize:13,letterSpacing:"0.14em",fontWeight:200 }}>touch the space {"\u00B7"} move slowly {"\u00B7"} find the trace</span></div></div> : null}
 
       {/* Reveal */}
       {phase === "revealing" && trace ? <RevealCanvas tone={trace.emotional_tone} path={trace.gesture_data.path} amplified={trace.gesture_data.path && analyzeGesture(trace.gesture_data.path).intensity > 0.5} pulseGesture={pendPulse} onDone={onRevealDone} /> : null}
@@ -1341,7 +1505,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
       {/* Milestone display */}
       {milestone ? <div style={{ position:"absolute",top:"42%",left:0,right:0,textAlign:"center",zIndex:16,pointerEvents:"none",fontFamily:FONT,animation:"fadeIn 1.5s ease" }}>
-        <div style={{ color:"rgba(212,165,116,0.4)",fontSize:11,letterSpacing:"0.2em",fontWeight:200 }}>{milestone}</div>
+        <div style={{ color:"rgba(212,165,116,0.4)",fontSize:13,letterSpacing:"0.2em",fontWeight:200 }}>{milestone}</div>
       </div> : null}
 
       {/* Still-here incoming from partner */}
@@ -1360,7 +1524,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {nudgeConfirm ? <div style={{ position:"absolute",inset:0,zIndex:52,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none" }}>
         <div style={{ pointerEvents:"auto",maxWidth:300,padding:"24px 28px",borderRadius:20,background:"rgba(17,17,24,0.95)",border:"1px solid rgba(255,255,255,0.08)",fontFamily:FONT,textAlign:"center",animation:"fadeIn 0.5s ease",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)" }}>
           <div style={{ color:"rgba(255,255,255,0.45)",fontSize:12,letterSpacing:"0.2em",fontWeight:200,marginBottom:12 }}>GENTLE REMINDER</div>
-          <div style={{ color:"rgba(255,255,255,0.5)",fontSize:11,fontWeight:200,lineHeight:1.7,marginBottom:20 }}>your person will be notified<br/>that you are waiting</div>
+          <div style={{ color:"rgba(255,255,255,0.5)",fontSize:13,fontWeight:200,lineHeight:1.7,marginBottom:20 }}>your person will be notified<br/>that you are waiting</div>
           <div style={{ display:"flex",gap:12,justifyContent:"center" }}>
             <div onClick={function() { setNudgeConfirm(false); }} style={{ padding:"10px 20px",borderRadius:20,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200 }}>CANCEL</div>
             <div onClick={doSendNudge} style={{ padding:"10px 20px",borderRadius:20,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.06)",cursor:"pointer",color:"rgba(212,165,116,0.7)",fontSize:12,fontWeight:300 }}>SEND</div>
@@ -1430,16 +1594,16 @@ function ResonanceSpace({ user, pair, onDissolve }) {
             <div style={{ width:44,height:44,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",border:"1px solid "+(lastTone?TONES[lastTone].primary+"44":"rgba(255,255,255,0.1)"),background:lastTone?"rgba("+TONES[lastTone].rgb.join(",")+",0.06)":"rgba(255,255,255,0.02)",boxShadow:"0 0 24px "+(lastTone?TONES[lastTone].primary+"33":"rgba(255,255,255,0.05)") }}>
               <div style={{ width:8,height:8,borderRadius:"50%",background:lastTone?TONES[lastTone].primary:"rgba(255,255,255,0.3)",boxShadow:"0 0 12px "+(lastTone?TONES[lastTone].primary+"66":"rgba(255,255,255,0.15)"),animation:"gentlePulse 4s ease-in-out infinite" }} />
             </div>
-            <span style={{ color:"rgba(255,255,255,0.35)",fontSize:11,letterSpacing:"0.12em",fontWeight:200 }}>send a trace</span>
+            <span style={{ color:"rgba(255,255,255,0.35)",fontSize:13,letterSpacing:"0.12em",fontWeight:200 }}>send a trace</span>
           </div>
           : phase === "idle" && sentTone ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",paddingBottom:20,gap:6 }}>
             <div style={{ width:7,height:7,borderRadius:"50%",background:TONES[sentTone]?TONES[sentTone].primary:"#555",boxShadow:"0 0 16px "+(TONES[sentTone]?TONES[sentTone].primary:"#555")+"77",animation:"gentlePulse 3s ease-in-out infinite" }} />
             <span style={{ color:(TONES[sentTone]?TONES[sentTone].primary:"#888")+"BB",fontSize:12,letterSpacing:"0.16em",fontWeight:200 }}>YOUR TRACE IS OUT THERE</span>
             {nudgeReady && !nudgeSent ? <div onClick={function() { setNudgeConfirm(true); }} style={{ marginTop:8,cursor:"pointer",padding:"8px 20px",borderRadius:16,border:"1px solid rgba(255,255,255,0.06)",background:"rgba(255,255,255,0.02)",animation:"fadeIn 1s ease" }}>
-              <span style={{ color:"rgba(255,255,255,0.35)",fontSize:11,letterSpacing:"0.12em",fontWeight:200 }}>send a gentle reminder</span>
+              <span style={{ color:"rgba(255,255,255,0.35)",fontSize:13,letterSpacing:"0.12em",fontWeight:200 }}>send a gentle reminder</span>
             </div> : null}
             {nudgeSent ? <div style={{ marginTop:8,animation:"fadeIn 0.5s ease" }}>
-              <span style={{ color:"rgba(212,165,116,0.4)",fontSize:11,letterSpacing:"0.12em",fontWeight:200 }}>reminder sent</span>
+              <span style={{ color:"rgba(212,165,116,0.4)",fontSize:13,letterSpacing:"0.12em",fontWeight:200 }}>reminder sent</span>
             </div> : null}
           </div>
           : phase === "idle" && !canSend && contribs.length > 0 ? null
@@ -1453,10 +1617,10 @@ function ResonanceSpace({ user, pair, onDissolve }) {
               </svg> : null}
               <div style={{ width:6,height:6,borderRadius:"50%",background:"rgba(212,165,116,"+(0.2+stillHereHold*0.4)+")",boxShadow:"0 0 "+(8+stillHereHold*20)+"px rgba(212,165,116,"+(0.1+stillHereHold*0.3)+")" }} />
             </div>
-            <span style={{ color:"rgba(255,255,255,0.25)",fontSize:11,letterSpacing:"0.12em",fontWeight:200 }}>hold to send your presence</span>
+            <span style={{ color:"rgba(255,255,255,0.25)",fontSize:13,letterSpacing:"0.12em",fontWeight:200 }}>hold to send your presence</span>
           </div> : null}
           {stillHereSent ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",paddingBottom:20,gap:6,animation:"fadeIn 0.5s ease" }}>
-            <span style={{ color:"rgba(212,165,116,0.4)",fontSize:11,letterSpacing:"0.12em",fontWeight:200 }}>presence sent</span>
+            <span style={{ color:"rgba(212,165,116,0.4)",fontSize:13,letterSpacing:"0.12em",fontWeight:200 }}>presence sent</span>
           </div> : null}
         </div>) : null}
     </div>
@@ -1487,7 +1651,7 @@ function IncomingMomentDisplay({ event, pair, onDismiss }) {
   // Whisper word from partner
   if (extra.whisper_word) {
     return <div style={{ position:"absolute",top:"38%",left:0,right:0,textAlign:"center",zIndex:38,pointerEvents:"none",fontFamily:FONT }}>
-      <div style={{ marginBottom:12,color:"rgba(255,255,255,"+(al*0.18)+")",fontSize:11,letterSpacing:"0.3em",fontWeight:200 }}>A WHISPER FROM YOUR PERSON</div>
+      <div style={{ marginBottom:12,color:"rgba(255,255,255,"+(al*0.18)+")",fontSize:13,letterSpacing:"0.3em",fontWeight:200 }}>A WHISPER FROM YOUR PERSON</div>
       <span style={{ fontSize:30,fontWeight:200,letterSpacing:"0.35em",color:"rgba("+rgb+","+(al*0.7)+")",textShadow:"0 0 35px rgba("+rgb+","+(al*0.25)+")" }}>{extra.whisper_word}</span>
     </div>;
   }
@@ -1495,7 +1659,7 @@ function IncomingMomentDisplay({ event, pair, onDismiss }) {
   // Echo mark from partner
   if (extra.echo_mark) {
     return <div style={{ position:"absolute",top:"30%",left:"50%",transform:"translate(-50%,-50%)",zIndex:9,pointerEvents:"none",fontFamily:FONT,textAlign:"center" }}>
-      <div style={{ marginBottom:12,color:"rgba(255,255,255,"+(al*0.18)+")",fontSize:11,letterSpacing:"0.3em",fontWeight:200 }}>A MARK LEFT FOR YOU</div>
+      <div style={{ marginBottom:12,color:"rgba(255,255,255,"+(al*0.18)+")",fontSize:13,letterSpacing:"0.3em",fontWeight:200 }}>A MARK LEFT FOR YOU</div>
       <span style={{ fontSize:42,color:"rgba("+rgb+","+(al*0.5)+")",textShadow:"0 0 25px rgba("+rgb+","+(al*0.15)+")" }}>{extra.echo_mark}</span>
     </div>;
   }
@@ -1549,7 +1713,7 @@ function InstallPrompt() {
 
   return <div style={{ position:"absolute",inset:0,zIndex:56,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none" }}>
     <div style={{ pointerEvents:"auto",maxWidth:300,padding:"24px 28px",borderRadius:20,background:"rgba(17,17,24,0.95)",border:"1px solid rgba(255,255,255,0.08)",fontFamily:FONT,textAlign:"center",animation:"fadeIn 0.8s ease",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)" }}>
-      <div style={{ color:"rgba(255,255,255,0.45)",fontSize:11,letterSpacing:"0.15em",fontWeight:300,marginBottom:10 }}>Install Resona</div>
+      <div style={{ color:"rgba(255,255,255,0.45)",fontSize:13,letterSpacing:"0.15em",fontWeight:300,marginBottom:10 }}>Install Resona</div>
       {canNativeInstall ? (
         <div>
           <div style={{ color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,marginBottom:18 }}>add to your home screen for the best experience</div>
@@ -1584,11 +1748,11 @@ function ConfirmOverlay({ title, text, confirmLabel, cancelLabel, confirmColor, 
   var cl = cancelLabel || "CANCEL";
   return <div style={{ position:"absolute",inset:0,zIndex:50,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 0.6s ease" }}>
     <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba("+cc+",0.4)",marginBottom:30 }} />
-    <div style={{ color:"rgba(255,255,255,0.6)",fontSize:11,letterSpacing:"0.3em",fontWeight:200,marginBottom:14 }}>{title}</div>
-    <div style={{ color:"rgba(255,255,255,0.5)",fontSize:11,fontWeight:200,letterSpacing:"0.06em",lineHeight:1.9,textAlign:"center",whiteSpace:"pre-line",marginBottom:40 }}>{text}</div>
+    <div style={{ color:"rgba(255,255,255,0.6)",fontSize:13,letterSpacing:"0.3em",fontWeight:200,marginBottom:14 }}>{title}</div>
+    <div style={{ color:"rgba(255,255,255,0.5)",fontSize:13,fontWeight:200,letterSpacing:"0.06em",lineHeight:1.9,textAlign:"center",whiteSpace:"pre-line",marginBottom:40 }}>{text}</div>
     <div style={{ display:"flex",gap:16 }}>
-      <div onClick={onCancel} style={{ padding:"14px 28px",borderRadius:24,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.55)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>{cl}</div>
-      <div onClick={onConfirm} style={{ padding:"14px 28px",borderRadius:24,border:"1px solid rgba("+cc+",0.2)",background:"rgba("+cc+",0.05)",cursor:"pointer",color:"rgba("+cc+",0.7)",fontSize:11,letterSpacing:"0.15em",fontWeight:300 }}>{confirmLabel}</div>
+      <div onClick={onCancel} style={{ padding:"14px 28px",borderRadius:24,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.55)",fontSize:13,letterSpacing:"0.15em",fontWeight:200 }}>{cl}</div>
+      <div onClick={onConfirm} style={{ padding:"14px 28px",borderRadius:24,border:"1px solid rgba("+cc+",0.2)",background:"rgba("+cc+",0.05)",cursor:"pointer",color:"rgba("+cc+",0.7)",fontSize:13,letterSpacing:"0.15em",fontWeight:300 }}>{confirmLabel}</div>
     </div>
   </div>;
 }
@@ -1609,12 +1773,12 @@ function WhisperPickerUI({ rgb, onSelect, onTimeout }) {
   var words = useRef(pickN(WHISPER_POOL, 5));
   useEffect(function() { var iv = setInterval(function() { st(function(t) { if (t <= 1) { onTimeout(); return 0; } return t-1; }); }, 1000); return function() { clearInterval(iv); }; }, [onTimeout]);
   return <div style={{ position:"absolute",inset:0,zIndex:45,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(6,6,12,0.93)",fontFamily:FONT,animation:"fadeIn 0.8s ease" }}>
-    <div style={{ color:"rgba(255,255,255,0.5)",fontSize:11,letterSpacing:"0.3em",fontWeight:200 }}>TWIN CONNECTION</div>
-    <div style={{ color:"rgba("+rgb+",0.6)",fontSize:14,letterSpacing:"0.2em",fontWeight:300 }}>choose a whisper for your person</div>
+    <div style={{ color:"rgba(255,255,255,0.5)",fontSize:13,letterSpacing:"0.3em",fontWeight:200,marginBottom:8 }}>TWIN CONNECTION</div>
+    <div style={{ color:"rgba("+rgb+",0.6)",fontSize:14,letterSpacing:"0.2em",fontWeight:300,marginBottom:36 }}>choose a whisper for your person</div>
     <div style={{ display:"flex",flexDirection:"column",gap:16,alignItems:"center" }}>
       {words.current.map(function(w) { return <div key={w} onClick={function() { onSelect(w); }} style={{ padding:"14px 44px",cursor:"pointer",borderRadius:24,border:"1px solid rgba("+rgb+",0.15)",background:"rgba("+rgb+",0.04)",fontSize:17,fontWeight:200,letterSpacing:"0.25em",color:"rgba("+rgb+",0.6)",transition:"all 0.3s" }}>{w}</div>; })}
     </div>
-    <div style={{ marginTop:32,color:"rgba(255,255,255,0.4)",fontSize:11,fontWeight:200 }}>{tm}s</div>
+    <div style={{ marginTop:32,color:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:200 }}>{tm}s</div>
   </div>;
 }
 
@@ -1622,7 +1786,7 @@ function WhisperDisplayUI({ word, rgb, onDone }) {
   var _a = useState(0), al = _a[0], sa = _a[1];
   useEffect(function() { var s = Date.now(); var iv = setInterval(function() { var pr = (Date.now()-s)/4000; if (pr >= 1) { clearInterval(iv); onDone(); } else sa(pr<0.15?pr/0.15:pr>0.7?1-(pr-0.7)/0.3:1); }, 30); return function() { clearInterval(iv); }; }, [onDone]);
   return <div style={{ position:"absolute",top:"38%",left:0,right:0,textAlign:"center",zIndex:38,pointerEvents:"none",fontFamily:FONT }}>
-    <div style={{ marginBottom:10,color:"rgba(255,255,255,"+(al*0.15)+")",fontSize:11,letterSpacing:"0.25em",fontWeight:200 }}>SENT TO YOUR PERSON</div>
+    <div style={{ marginBottom:10,color:"rgba(255,255,255,"+(al*0.15)+")",fontSize:13,letterSpacing:"0.25em",fontWeight:200 }}>SENT TO YOUR PERSON</div>
     <span style={{ fontSize:30,fontWeight:200,letterSpacing:"0.35em",color:"rgba("+rgb+","+(al*0.7)+")",textShadow:"0 0 35px rgba("+rgb+","+(al*0.25)+")" }}>{word}</span>
   </div>;
 }
@@ -1632,10 +1796,10 @@ function EchoMarkPickerUI({ rgb, onSelect, onTimeout }) {
   var marks = useRef(pickN(ECHO_POOL, 5));
   useEffect(function() { var iv = setInterval(function() { st(function(t) { if (t <= 1) { onTimeout(); return 0; } return t-1; }); }, 1000); return function() { clearInterval(iv); }; }, [onTimeout]);
   return <div style={{ position:"absolute",inset:0,zIndex:45,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(6,6,12,0.93)",fontFamily:FONT,animation:"fadeIn 0.8s ease" }}>
-    <div style={{ color:"rgba(255,255,255,0.5)",fontSize:11,letterSpacing:"0.3em",fontWeight:200 }}>TRACES CONVERGED</div>
-    <div style={{ color:"rgba("+rgb+",0.6)",fontSize:12,letterSpacing:"0.2em",fontWeight:300,marginBottom:44 }}>leave a mark for your person</div>
+    <div style={{ color:"rgba(255,255,255,0.5)",fontSize:13,letterSpacing:"0.3em",fontWeight:200,marginBottom:8 }}>TRACES CONVERGED</div>
+    <div style={{ color:"rgba("+rgb+",0.6)",fontSize:14,letterSpacing:"0.2em",fontWeight:300,marginBottom:36 }}>leave a mark for your person</div>
     <div style={{ display:"flex",gap:22 }}>{marks.current.map(function(m) { return <div key={m.n} onClick={function() { onSelect(m); }} style={{ width:64,height:64,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",borderRadius:"50%",border:"1px solid rgba("+rgb+",0.15)",background:"rgba("+rgb+",0.04)",fontSize:24,color:"rgba("+rgb+",0.6)",transition:"all 0.3s" }}>{m.g}</div>; })}</div>
-    <div style={{ marginTop:32,color:"rgba(255,255,255,0.4)",fontSize:11,fontWeight:200 }}>{tm}s</div>
+    <div style={{ marginTop:32,color:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:200 }}>{tm}s</div>
   </div>;
 }
 
@@ -1643,7 +1807,7 @@ function EchoMarkDisplayUI({ mark, rgb, onDone }) {
   var _a = useState(0), al = _a[0], sa = _a[1];
   useEffect(function() { var s = Date.now(); var iv = setInterval(function() { var pr = (Date.now()-s)/4000; if (pr >= 1) { clearInterval(iv); onDone(); } else sa(pr<0.1?pr/0.1:1-(pr-0.1)/0.9); }, 100); return function() { clearInterval(iv); }; }, [onDone]);
   return <div style={{ position:"absolute",top:"28%",left:"50%",transform:"translate(-50%,-50%)",zIndex:9,pointerEvents:"none",fontFamily:FONT,textAlign:"center" }}>
-    <div style={{ marginBottom:10,color:"rgba(255,255,255,"+(al*0.15)+")",fontSize:11,letterSpacing:"0.25em",fontWeight:200 }}>YOUR MARK</div>
+    <div style={{ marginBottom:10,color:"rgba(255,255,255,"+(al*0.15)+")",fontSize:13,letterSpacing:"0.25em",fontWeight:200 }}>YOUR MARK</div>
     <span style={{ fontSize:42,color:"rgba("+rgb+","+(al*0.35)+")",textShadow:"0 0 25px rgba("+rgb+","+(al*0.12)+")" }}>{mark.g}</span>
   </div>;
 }
@@ -1667,7 +1831,7 @@ function PulseCaptureUI({ tone, rgb, onCapture }) {
   return <div style={{ position:"absolute",inset:0,zIndex:45,display:"flex",flexDirection:"column",fontFamily:FONT,animation:"fadeIn 0.6s ease" }}>
     <div style={{ position:"absolute",inset:0,background:"rgba(6,6,12,0.9)",zIndex:-1 }} />
     <div style={{ textAlign:"center",padding:"30px 0 10px" }}>
-      <div style={{ color:"rgba(255,255,255,0.5)",fontSize:11,letterSpacing:"0.3em",fontWeight:200 }}>AMPLIFIED REVEAL</div>
+      <div style={{ color:"rgba(255,255,255,0.5)",fontSize:13,letterSpacing:"0.3em",fontWeight:200 }}>AMPLIFIED REVEAL</div>
       <div style={{ color:"rgba("+rgb+",0.6)",fontSize:12,letterSpacing:"0.18em",fontWeight:300 }}>{pp.length>5?"reaction captured":tm===null?"touch to react":"drawing \u00B7 "+tm+"s"}</div>
     </div>
     <div style={{ flex:1,position:"relative",touchAction:"none",cursor:"crosshair" }} onPointerDown={oD} onPointerMove={oM} onPointerUp={oU}><canvas ref={cv} style={{ position:"absolute",inset:0,width:"100%",height:"100%" }} /></div>
@@ -1708,9 +1872,9 @@ function GlimpseCanvas({ contribs, onDone }) {
     var c = ref.current; if (!c) return;
     var ctx = c.getContext("2d"), dpr = window.devicePixelRatio || 1, rect = c.getBoundingClientRect();
     c.width = rect.width * dpr; c.height = rect.height * dpr; ctx.scale(dpr, dpr);
-    var w = rect.width, h = rect.height, cx = w/2, cy = h/2, start = Date.now(), dur = 5000, af, gt = textRef.current;
+    var w = rect.width, h = rect.height, cx = w/2, cy = h/2, start = Date.now(), dur = 9000, af, gt = textRef.current;
     function draw() {
-      var pr = Math.min(1,(Date.now()-start)/dur), fi = Math.min(1,pr*2.5), fo = pr>0.65?1-(pr-0.65)/0.35:1, a = fi*fo;
+      var pr = Math.min(1,(Date.now()-start)/dur), fi = Math.min(1,pr*2), fo = pr>0.7?1-(pr-0.7)/0.3:1, a = fi*fo;
       ctx.clearRect(0,0,w,h); ctx.fillStyle = "rgba(6,6,12,"+(0.93*a)+")"; ctx.fillRect(0,0,w,h);
       var baseR = contribs.length<=2?0.25:contribs.length<=5?0.32:0.4;
       var vr = Math.min(w,h)*baseR*a;
@@ -1719,7 +1883,7 @@ function GlimpseCanvas({ contribs, onDone }) {
       drawArtwork(ctx, contribs, w, h, a * 0.7);
       ctx.globalAlpha=1;ctx.globalCompositeOperation="source-over";ctx.restore();
       var eg=ctx.createRadialGradient(cx,cy,vr*0.6,cx,cy,vr*1.12);eg.addColorStop(0,"transparent");eg.addColorStop(1,"rgba(6,6,12,"+a+")");ctx.fillStyle=eg;ctx.fillRect(0,0,w,h);
-      ctx.fillStyle="rgba(255,255,255,"+(0.28*a)+")";ctx.font="200 14px "+FONT;ctx.textAlign="center";ctx.fillText(gt,cx,cy+vr+26);
+      ctx.fillStyle="rgba(255,255,255,"+(0.35*a)+")";ctx.font="200 16px "+FONT;ctx.textAlign="center";ctx.fillText(gt,cx,cy+vr+30);
       if(pr<1)af=requestAnimationFrame(draw);else setTimeout(onDone,200);
     }
     af=requestAnimationFrame(draw);return function(){cancelAnimationFrame(af);};
@@ -1818,10 +1982,10 @@ function ReunionPropose({ pair, user, onDone }) {
   return <div style={{ position:"absolute",inset:0,zIndex:50,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 0.6s ease" }}>
     <button onClick={function() { onDone(null); }} style={{ position:"absolute",top:14,right:14,zIndex:25,background:"none",border:"none",color:"rgba(255,255,255,0.5)",fontSize:20,cursor:"pointer",padding:10 }}>{"\u2715"}</button>
     <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(212,165,116,0.4)",marginBottom:30 }} />
-    <div style={{ color:"rgba(255,255,255,0.45)",fontSize:11,letterSpacing:"0.3em",fontWeight:200,marginBottom:10 }}>REUNION</div>
+    <div style={{ color:"rgba(255,255,255,0.45)",fontSize:13,letterSpacing:"0.3em",fontWeight:200,marginBottom:10 }}>REUNION</div>
     <div style={{ color:"rgba(255,255,255,0.6)",fontSize:12,fontWeight:200,letterSpacing:"0.12em",lineHeight:1.8,textAlign:"center",marginBottom:36 }}>
       choose a day to see each other<br/>
-      <span style={{ color:"rgba(255,255,255,0.4)",fontSize:10 }}>your shared artwork will be revealed</span>
+      <span style={{ color:"rgba(255,255,255,0.4)",fontSize:12 }}>your shared artwork will be revealed</span>
     </div>
     <input type="date" value={dateVal} min={today} onChange={function(ev) { setDateVal(ev.target.value); }}
       style={{ fontSize:16,fontWeight:200,color:"rgba(255,255,255,0.5)",padding:"14px 24px",borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",outline:"none",fontFamily:FONT,colorScheme:"dark",marginBottom:24 }} />
@@ -1839,15 +2003,15 @@ function ReunionIncoming({ reunion, onRespond }) {
   var dateStr = new Date(reunion.proposed_date + "T00:00:00").toLocaleDateString(undefined, { weekday:"long", day:"numeric", month:"long" });
   return <div style={{ position:"absolute",inset:0,zIndex:50,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 0.8s ease" }}>
     <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(212,165,116,0.4)",marginBottom:30 }} />
-    <div style={{ color:"rgba(255,255,255,0.45)",fontSize:11,letterSpacing:"0.3em",fontWeight:200,marginBottom:10 }}>REUNION</div>
+    <div style={{ color:"rgba(255,255,255,0.45)",fontSize:13,letterSpacing:"0.3em",fontWeight:200,marginBottom:10 }}>REUNION</div>
     <div style={{ color:"rgba(255,255,255,0.6)",fontSize:12,fontWeight:200,letterSpacing:"0.12em",lineHeight:1.8,textAlign:"center",marginBottom:12 }}>
       your person wants to see you
     </div>
     <div style={{ color:"rgba(212,165,116,0.6)",fontSize:18,fontWeight:200,letterSpacing:"0.15em",marginBottom:10 }}>{dateStr}</div>
     <div style={{ color:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:200,marginBottom:40 }}>your shared artwork will be revealed</div>
     <div style={{ display:"flex",gap:16 }}>
-      <div onClick={function() { onRespond(false); }} style={{ padding:"14px 32px",borderRadius:24,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>NOT YET</div>
-      <div onClick={function() { onRespond(true); }} style={{ padding:"14px 32px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.06)",cursor:"pointer",color:"rgba(212,165,116,0.6)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>ACCEPT</div>
+      <div onClick={function() { onRespond(false); }} style={{ padding:"14px 32px",borderRadius:24,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:13,letterSpacing:"0.15em",fontWeight:200 }}>NOT YET</div>
+      <div onClick={function() { onRespond(true); }} style={{ padding:"14px 32px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.06)",cursor:"pointer",color:"rgba(212,165,116,0.6)",fontSize:13,letterSpacing:"0.15em",fontWeight:200 }}>ACCEPT</div>
     </div>
   </div>;
 }
@@ -1931,14 +2095,14 @@ function ReunionReveal({ contribs, reunion, onDone }) {
   return <div style={{ position:"absolute",inset:0,zIndex:55 }}>
     <canvas ref={cvRef} style={{ position:"absolute",inset:0,width:"100%",height:"100%" }} />
     <div style={{ position:"absolute",top:"8%",left:0,right:0,textAlign:"center",zIndex:1,pointerEvents:"none",fontFamily:FONT }}>
-      <div style={{ color:"rgba(212,165,116,"+(al*0.3)+")",fontSize:11,letterSpacing:"0.3em",fontWeight:200,marginBottom:6 }}>REUNION</div>
+      <div style={{ color:"rgba(212,165,116,"+(al*0.3)+")",fontSize:13,letterSpacing:"0.3em",fontWeight:200,marginBottom:6 }}>REUNION</div>
       <div style={{ color:"rgba(255,255,255,"+(al*0.2)+")",fontSize:12,fontWeight:200 }}>{dateStr}</div>
     </div>
     {animDone ? <div style={{ position:"absolute",bottom:"8%",left:0,right:0,textAlign:"center",zIndex:1,fontFamily:FONT,animation:"fadeIn 1s ease",paddingBottom:"env(safe-area-inset-bottom, 0px)" }}>
       <div style={{ color:"rgba(255,255,255,0.15)",fontSize:12,letterSpacing:"0.1em",fontWeight:200,marginBottom:20 }}>everything you built together</div>
       <div style={{ display:"flex",gap:16,justifyContent:"center" }}>
-        <div onClick={saveArtwork} style={{ padding:"12px 28px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.05)",cursor:"pointer",color:"rgba(212,165,116,0.6)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>SAVE</div>
-        <div onClick={onDone} style={{ padding:"12px 28px",borderRadius:24,border:"1px solid rgba(255,255,255,0.08)",cursor:"pointer",color:"rgba(255,255,255,0.45)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>CONTINUE</div>
+        <div onClick={saveArtwork} style={{ padding:"12px 28px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.05)",cursor:"pointer",color:"rgba(212,165,116,0.6)",fontSize:13,letterSpacing:"0.15em",fontWeight:200 }}>SAVE</div>
+        <div onClick={onDone} style={{ padding:"12px 28px",borderRadius:24,border:"1px solid rgba(255,255,255,0.08)",cursor:"pointer",color:"rgba(255,255,255,0.45)",fontSize:13,letterSpacing:"0.15em",fontWeight:200 }}>CONTINUE</div>
       </div>
     </div> : <div style={{ position:"absolute",bottom:"8%",left:0,right:0,textAlign:"center",zIndex:1,pointerEvents:"none",fontFamily:FONT }}>
       <div style={{ color:"rgba(255,255,255,"+(al*0.15)+")",fontSize:12,letterSpacing:"0.1em",fontWeight:200 }}>everything you built together</div>
@@ -1952,14 +2116,14 @@ function ReunionReveal({ contribs, reunion, onDone }) {
 function ResetIncoming({ onRespond }) {
   return <div style={{ position:"absolute",inset:0,zIndex:50,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 0.8s ease" }}>
     <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(255,255,255,0.3)",marginBottom:30 }} />
-    <div style={{ color:"rgba(255,255,255,0.45)",fontSize:11,letterSpacing:"0.3em",fontWeight:200,marginBottom:10 }}>START FRESH</div>
+    <div style={{ color:"rgba(255,255,255,0.45)",fontSize:13,letterSpacing:"0.3em",fontWeight:200,marginBottom:10 }}>START FRESH</div>
     <div style={{ color:"rgba(255,255,255,0.6)",fontSize:12,fontWeight:200,letterSpacing:"0.12em",lineHeight:1.8,textAlign:"center",marginBottom:12 }}>
       your person wants to start over
     </div>
     <div style={{ color:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:200,marginBottom:40,textAlign:"center" }}>all traces and artwork will be cleared<br/>you can build something new together</div>
     <div style={{ display:"flex",gap:16 }}>
-      <div onClick={function() { onRespond(false); }} style={{ padding:"14px 32px",borderRadius:24,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>KEEP</div>
-      <div onClick={function() { onRespond(true); }} style={{ padding:"14px 32px",borderRadius:24,border:"1px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.04)",cursor:"pointer",color:"rgba(255,255,255,0.45)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>START FRESH</div>
+      <div onClick={function() { onRespond(false); }} style={{ padding:"14px 32px",borderRadius:24,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:13,letterSpacing:"0.15em",fontWeight:200 }}>KEEP</div>
+      <div onClick={function() { onRespond(true); }} style={{ padding:"14px 32px",borderRadius:24,border:"1px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.04)",cursor:"pointer",color:"rgba(255,255,255,0.45)",fontSize:13,letterSpacing:"0.15em",fontWeight:200 }}>START FRESH</div>
     </div>
   </div>;
 }
@@ -1976,9 +2140,9 @@ function PostRevealPrompt({ onStartFresh, onKeep }) {
     <div style={{ color:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:200,marginBottom:40,textAlign:"center" }}>would you like to start a new chapter?</div>
     <div style={{ display:"flex",flexDirection:"column",gap:16,alignItems:"center" }}>
       <div onClick={onStartFresh} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(212,165,116,0.15)",background:"rgba(212,165,116,0.04)",cursor:"pointer",color:"rgba(212,165,116,0.5)",fontSize:12,letterSpacing:"0.18em",fontWeight:200 }}>START FRESH</div>
-      <div onClick={onKeep} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.45)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>keep everything</div>
+      <div onClick={onKeep} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.45)",fontSize:13,letterSpacing:"0.15em",fontWeight:200 }}>keep everything</div>
     </div>
-    <div style={{ position:"absolute",bottom:30,color:"rgba(255,255,255,0.6)",fontSize:11,fontWeight:200,textAlign:"center" }}>your person will need to agree too</div>
+    <div style={{ position:"absolute",bottom:30,color:"rgba(255,255,255,0.6)",fontSize:13,fontWeight:200,textAlign:"center" }}>your person will need to agree too</div>
   </div>;
 }
 
@@ -2007,14 +2171,14 @@ function EmailLinkUI({ onDone }) {
 
     {step === "input" || step === "error" ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:20,maxWidth:320 }}>
       <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(212,165,116,0.5)",marginBottom:10 }} />
-      <div style={{ color:"rgba(255,255,255,0.5)",fontSize:11,letterSpacing:"0.3em",fontWeight:200 }}>SECURE YOUR ACCOUNT</div>
-      <div style={{ color:"rgba(255,255,255,0.45)",fontSize:11,fontWeight:200,lineHeight:1.7,textAlign:"center" }}>
+      <div style={{ color:"rgba(255,255,255,0.5)",fontSize:13,letterSpacing:"0.3em",fontWeight:200 }}>SECURE YOUR ACCOUNT</div>
+      <div style={{ color:"rgba(255,255,255,0.45)",fontSize:13,fontWeight:200,lineHeight:1.7,textAlign:"center" }}>
         Enter your email to receive a magic link.<br/>Your account will be safe even if you switch devices.
       </div>
       {err ? <div style={{ color:"rgba(196,30,58,0.6)",fontSize:12,fontWeight:200 }}>{err}</div> : null}
       <input type="email" value={email} onChange={function(ev) { setEmail(ev.target.value); }} placeholder="your@email.com"
         style={{ fontSize:14,fontWeight:200,color:"rgba(255,255,255,0.6)",padding:"14px 20px",borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",outline:"none",fontFamily:FONT,width:"100%",textAlign:"center" }} />
-      <div onClick={submit} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:email.includes("@")?"rgba(212,165,116,0.06)":"transparent",cursor:email.includes("@")?"pointer":"default",color:email.includes("@")?"rgba(212,165,116,0.7)":"rgba(255,255,255,0.2)",fontSize:11,letterSpacing:"0.15em",fontWeight:300 }}>SEND MAGIC LINK</div>
+      <div onClick={submit} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:email.includes("@")?"rgba(212,165,116,0.06)":"transparent",cursor:email.includes("@")?"pointer":"default",color:email.includes("@")?"rgba(212,165,116,0.7)":"rgba(255,255,255,0.2)",fontSize:13,letterSpacing:"0.15em",fontWeight:300 }}>SEND MAGIC LINK</div>
     </div> : null}
 
     {step === "sending" ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:16 }}>
@@ -2025,7 +2189,7 @@ function EmailLinkUI({ onDone }) {
     {step === "sent" ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:16,maxWidth:300 }}>
       <div style={{ width:6,height:6,borderRadius:"50%",background:"rgba(100,200,100,0.5)" }} />
       <div style={{ color:"rgba(255,255,255,0.5)",fontSize:12,letterSpacing:"0.2em",fontWeight:200 }}>CHECK YOUR EMAIL</div>
-      <div style={{ color:"rgba(255,255,255,0.4)",fontSize:11,fontWeight:200,lineHeight:1.7,textAlign:"center" }}>
+      <div style={{ color:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:200,lineHeight:1.7,textAlign:"center" }}>
         We sent a confirmation link to <strong style={{ color:"rgba(255,255,255,0.6)" }}>{email}</strong>. Click it to secure your account.
       </div>
       <div onClick={onDone} style={{ marginTop:10,padding:"12px 32px",borderRadius:20,border:"1px solid rgba(255,255,255,0.08)",cursor:"pointer",color:"rgba(255,255,255,0.45)",fontSize:12,fontWeight:200 }}>DONE</div>
@@ -2077,14 +2241,14 @@ function SignInUI({ onDone, onBack }) {
 
     {step === "input" || step === "error" ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:20,maxWidth:320 }}>
       <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(212,165,116,0.5)",marginBottom:10 }} />
-      <div style={{ color:"rgba(255,255,255,0.5)",fontSize:11,letterSpacing:"0.3em",fontWeight:200 }}>WELCOME BACK</div>
-      <div style={{ color:"rgba(255,255,255,0.45)",fontSize:11,fontWeight:200,lineHeight:1.7,textAlign:"center" }}>
+      <div style={{ color:"rgba(255,255,255,0.5)",fontSize:13,letterSpacing:"0.3em",fontWeight:200 }}>WELCOME BACK</div>
+      <div style={{ color:"rgba(255,255,255,0.45)",fontSize:13,fontWeight:200,lineHeight:1.7,textAlign:"center" }}>
         Enter the email you used to secure<br/>your account. We'll send a sign-in link.
       </div>
       {err ? <div style={{ color:"rgba(196,30,58,0.6)",fontSize:12,fontWeight:200 }}>{err}</div> : null}
       <input type="email" value={email} onChange={function(ev) { setEmail(ev.target.value); }} placeholder="your@email.com"
         style={{ fontSize:14,fontWeight:200,color:"rgba(255,255,255,0.6)",padding:"14px 20px",borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",outline:"none",fontFamily:FONT,width:"100%",textAlign:"center" }} />
-      <div onClick={submit} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:email.includes("@")?"rgba(212,165,116,0.06)":"transparent",cursor:email.includes("@")?"pointer":"default",color:email.includes("@")?"rgba(212,165,116,0.7)":"rgba(255,255,255,0.2)",fontSize:11,letterSpacing:"0.15em",fontWeight:300 }}>SEND SIGN-IN LINK</div>
+      <div onClick={submit} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:email.includes("@")?"rgba(212,165,116,0.06)":"transparent",cursor:email.includes("@")?"pointer":"default",color:email.includes("@")?"rgba(212,165,116,0.7)":"rgba(255,255,255,0.2)",fontSize:13,letterSpacing:"0.15em",fontWeight:300 }}>SEND SIGN-IN LINK</div>
       <div onClick={onBack} style={{ cursor:"pointer",padding:"8px 16px",marginTop:4 }}>
         <span style={{ color:"rgba(255,255,255,0.25)",fontSize:12,letterSpacing:"0.1em",fontWeight:200 }}>back</span>
       </div>
@@ -2098,10 +2262,10 @@ function SignInUI({ onDone, onBack }) {
     {step === "sent" ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:16,maxWidth:300 }}>
       <div style={{ width:6,height:6,borderRadius:"50%",background:"rgba(100,200,100,0.5)" }} />
       <div style={{ color:"rgba(255,255,255,0.5)",fontSize:12,letterSpacing:"0.2em",fontWeight:200 }}>CHECK YOUR EMAIL</div>
-      <div style={{ color:"rgba(255,255,255,0.4)",fontSize:11,fontWeight:200,lineHeight:1.7,textAlign:"center" }}>
+      <div style={{ color:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:200,lineHeight:1.7,textAlign:"center" }}>
         We sent a sign-in link to <strong style={{ color:"rgba(255,255,255,0.6)" }}>{email}</strong>.<br/>Click it to sign in.
       </div>
-      <div style={{ color:"rgba(255,255,255,0.3)",fontSize:11,fontWeight:200,lineHeight:1.6,textAlign:"center",marginTop:8 }}>
+      <div style={{ color:"rgba(255,255,255,0.3)",fontSize:13,fontWeight:200,lineHeight:1.6,textAlign:"center",marginTop:8 }}>
         After clicking the link, this page<br/>will automatically continue.
       </div>
       <div onClick={onBack} style={{ marginTop:16,padding:"12px 32px",borderRadius:20,border:"1px solid rgba(255,255,255,0.08)",cursor:"pointer",color:"rgba(255,255,255,0.45)",fontSize:12,fontWeight:200 }}>BACK</div>
