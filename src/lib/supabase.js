@@ -338,9 +338,11 @@ export async function getActiveProposal(pairId, type) {
 }
 
 export async function proposeReunion(pairId, userId, date) {
-  await supabase.from('pair_proposals')
-    .update({ status: 'declined' })
-    .eq('pair_id', pairId).eq('type', 'reunion').eq('status', 'pending');
+  try {
+    await supabase.from('pair_proposals')
+      .update({ status: 'declined' })
+      .eq('pair_id', pairId).eq('type', 'reunion').eq('status', 'pending');
+  } catch (e) { /* no pending reunions — fine */ }
   const { data, error } = await supabase.from('pair_proposals').insert({
     pair_id: pairId, proposed_by: userId, type: 'reunion', proposed_date: date, status: 'pending',
   }).select().single();
@@ -349,9 +351,11 @@ export async function proposeReunion(pairId, userId, date) {
 }
 
 export async function proposeReset(pairId, userId) {
-  await supabase.from('pair_proposals')
-    .update({ status: 'declined' })
-    .eq('pair_id', pairId).eq('type', 'reset').eq('status', 'pending');
+  try {
+    await supabase.from('pair_proposals')
+      .update({ status: 'declined' })
+      .eq('pair_id', pairId).eq('type', 'reset').eq('status', 'pending');
+  } catch (e) { /* no pending resets — fine */ }
   const { data, error } = await supabase.from('pair_proposals').insert({
     pair_id: pairId, proposed_by: userId, type: 'reset', status: 'pending',
   }).select().single();
@@ -360,9 +364,12 @@ export async function proposeReset(pairId, userId) {
 }
 
 export async function proposeReveal(pairId, userId) {
-  await supabase.from('pair_proposals')
-    .update({ status: 'declined' })
-    .eq('pair_id', pairId).eq('type', 'reveal').eq('status', 'pending');
+  // Decline existing pending reveals (ignore errors — might be none)
+  try {
+    await supabase.from('pair_proposals')
+      .update({ status: 'declined' })
+      .eq('pair_id', pairId).eq('type', 'reveal').eq('status', 'pending');
+  } catch (e) { /* no pending reveals to decline — fine */ }
   const { data, error } = await supabase.from('pair_proposals').insert({
     pair_id: pairId, proposed_by: userId, type: 'reveal', status: 'pending',
   }).select().single();
@@ -371,6 +378,7 @@ export async function proposeReveal(pairId, userId) {
 }
 
 export async function respondToProposal(proposalId, accept) {
+  if (!proposalId) throw new Error("No proposal ID");
   const { error } = await supabase.from('pair_proposals')
     .update({ status: accept ? 'accepted' : 'declined', responded_at: new Date().toISOString() })
     .eq('id', proposalId);

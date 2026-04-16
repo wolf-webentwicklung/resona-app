@@ -1375,7 +1375,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {reunionUI === "confirm_reveal" ? <ConfirmOverlay
         title="REVEAL ARTWORK" text={"see everything you\u2019ve created together\nyour person will need to agree too"}
         confirmLabel="SEND REQUEST" confirmColor="212,165,116"
-        onConfirm={function() { proposeReveal(pair.id, user.id).then(function() { setReunionUI(null); }).catch(function(e) { console.error(e); setAppError("Failed to send request. Try again."); setReunionUI(null); }); }}
+        onConfirm={function() { proposeReveal(pair.id, user.id).then(function() { setReunionUI(null); }).catch(function(e) { console.error("Reveal propose error:", e); setAppError(e.message || "Failed to send request."); setReunionUI(null); }); }}
         onCancel={function() { setReunionUI(null); }}
       /> : null}
 
@@ -1383,12 +1383,12 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {reunionUI === "confirm_reset" ? <ConfirmOverlay
         title="START FRESH" text={"all traces and artwork will be cleared\nyou can build something new together\nyour person will need to agree too"}
         confirmLabel="SEND REQUEST" confirmColor="255,255,255"
-        onConfirm={function() { proposeReset(pair.id, user.id).then(function() { setReunionUI(null); }).catch(function(e) { console.error(e); setAppError("Failed to send request. Try again."); setReunionUI(null); }); }}
+        onConfirm={function() { proposeReset(pair.id, user.id).then(function() { setReunionUI(null); }).catch(function(e) { console.error("Reset propose error:", e); setAppError(e.message || "Failed to send request."); setReunionUI(null); }); }}
         onCancel={function() { setReunionUI(null); }}
       /> : null}
 
       {/* Incoming: Reunion */}
-      {reunionUI === "incoming_reunion" && reunion ? <ReunionIncoming reunion={reunion} onRespond={function(accept) { respondToProposal(reunion.id, accept).then(function() { setReunionUI(null); if (accept) setReunion(Object.assign({}, reunion, { status: "accepted" })); }).catch(function(e) { console.error("Respond error:", e); setAppError("Failed to respond. Try again."); setReunionUI(null); }); }} /> : null}
+      {reunionUI === "incoming_reunion" && reunion ? <ReunionIncoming reunion={reunion} onRespond={function(accept) { respondToProposal(reunion.id, accept).then(function() { setReunionUI(null); if (accept) setReunion(Object.assign({}, reunion, { status: "accepted" })); }).catch(function(e) { console.error("Respond error:", e); setAppError(e.message || "Failed to respond."); setReunionUI(null); }); }} /> : null}
 
       {/* Incoming: Reset */}
       {reunionUI === "incoming_reset" && reunion ? <ResetIncoming onRespond={function(accept) {
@@ -1397,16 +1397,16 @@ function ResonanceSpace({ user, pair, onDissolve }) {
             executeResetArtwork(pair.id).then(function() {
               completeProposal(reunion.id).catch(function(){});
               setContribs([]); setRecTones([]); setReunion(null); setReunionUI(null);
-            }).catch(function(e) { console.error("Reset error:", e); setAppError("Reset failed. Try again."); setReunionUI(null); });
+            }).catch(function(e) { console.error("Reset error:", e); setAppError(e.message || "Reset failed."); setReunionUI(null); });
           } else { setReunionUI(null); }
-        }).catch(function(e) { console.error("Respond error:", e); setAppError("Failed to respond. Try again."); setReunionUI(null); });
+        }).catch(function(e) { console.error("Respond error:", e); setAppError(e.message || "Failed to respond."); setReunionUI(null); });
       }} /> : null}
 
       {/* Incoming: Reveal */}
       {reunionUI === "incoming_reveal" && reunion ? <ConfirmOverlay
         title="REVEAL ARTWORK" text={"your person wants to see\nwhat you\u2019ve created together"}
         confirmLabel="REVEAL" confirmColor="212,165,116" cancelLabel="NOT YET"
-        onConfirm={function() { respondToProposal(reunion.id, true).then(function() { setReunion(Object.assign({}, reunion, { status: "accepted" })); setReunionUI("reveal"); }).catch(function(e) { console.error("Reveal respond error:", e); setAppError("Failed to respond. Try again."); setReunionUI(null); }); }}
+        onConfirm={function() { respondToProposal(reunion.id, true).then(function() { setReunion(Object.assign({}, reunion, { status: "accepted" })); setReunionUI("reveal"); }).catch(function(e) { console.error("Reveal respond error:", e); setAppError(e.message || "Failed to respond."); setReunionUI(null); }); }}
         onCancel={function() { respondToProposal(reunion.id, false).then(function() { setReunionUI(null); }).catch(function(e) { console.error("Decline error:", e); setReunionUI(null); }); }}
       /> : null}
 
