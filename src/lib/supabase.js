@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { analyzeGestureFeel, computeDiscoveryMode } from './constants.js';
+import { analyzeGestureFeel } from './constants.js';
 
 // ═══════════════════════════════════════════
 // RESONA — SUPABASE CONFIG
@@ -111,9 +111,8 @@ export async function sendTrace(pairId, senderId, receiverId, path, tone, isFirs
     .select('id', { count: 'exact', head: true })
     .eq('pair_id', pairId)
     .eq('sender_id', senderId);
-  isFirstTrace = (count === 0);
-
-  var dm = computeDiscoveryMode(tone, feel, isFirstTrace);
+  var isFirst = (count != null && count === 0);
+  var dm = isFirst ? 'stillness' : ['stillness', 'wake', 'follow'][Math.floor(Math.random() * 3)];
 
   // Signal type: mode takes precedence, then tone preference, then random
   var modeSignals = { wake: 'pulse', follow: 'drift', stillness: tp.preferSignal };
