@@ -20,6 +20,25 @@ export async function ensureUser() {
   return data.user;
 }
 
+// ── Auth: check if user is anonymous (guest) ──
+export function isGuest(user) {
+  return user && user.is_anonymous === true;
+}
+
+// ── Auth: link email to anonymous account ──
+export async function linkEmail(email) {
+  const { data, error } = await supabase.auth.updateUser({ email: email });
+  if (error) throw error;
+  return data;
+}
+
+// ── Auth: sign in with email (magic link) ──
+export async function signInWithEmail(email) {
+  const { data, error } = await supabase.auth.signInWithOtp({ email: email });
+  if (error) throw error;
+  return data;
+}
+
 // ── Pair: create invite ──
 export async function createPair() {
   const { data, error } = await supabase.rpc('create_pair');
