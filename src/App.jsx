@@ -1325,7 +1325,6 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   var onWhisperSelect = useCallback(function(w) {
     hapticLight();
-    setMPhase("whisperShow"); setWhisper(w);
     finishMoment({ whisper_word: w });
   }, [finishMoment]);
   var onWhisperTimeout = useCallback(function() { finishMoment(null); }, [finishMoment]);
@@ -1333,7 +1332,6 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   var onEchoSelect = useCallback(function(m) {
     hapticLight();
-    setMPhase("echoShow"); setEchoM(m);
     finishMoment({ echo_mark: m.g, echo_name: m.n });
   }, [finishMoment]);
   var onEchoTimeout = useCallback(function() { finishMoment(null); }, [finishMoment]);
@@ -1488,6 +1486,10 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     if (stillHereHoldRef.current || !stillHereReady || phase !== "idle") return;
     var s = Date.now();
     stillHereHoldRef.current = setInterval(function() {
+      if (phR.current !== "idle") {
+        clearInterval(stillHereHoldRef.current); stillHereHoldRef.current = null;
+        setStillHereHold(0); return;
+      }
       var p2 = Math.min(1, (Date.now() - s) / 2000);
       setStillHereHold(p2);
       if (p2 >= 1) {
@@ -1719,8 +1721,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {/* Reveal */}
       {phase === "revealing" && trace ? <RevealCanvas tone={trace.emotional_tone} path={trace.gesture_data.path} amplified={trace.gesture_data.path && analyzeGesture(trace.gesture_data.path).intensity > 0.5} pulseGesture={pendPulse} onDone={onRevealDone} /> : null}
 
-      {/* Glimpse */}
-      {phase === "glimpse" && contribs.length > 0 ? <div onClick={onGlimpseDone} style={{ position:"absolute",inset:0,zIndex:34 }}><GlimpseCanvas contribs={contribs} onDone={onGlimpseDone} /></div> : null}
+      {/* Glimpse — wrapper becomes tappable after 1s to avoid carry-over from reveal tap */}
+      {phase === "glimpse" && contribs.length > 0 ? <GlimpseWrapper contribs={contribs} onDone={onGlimpseDone} /> : null}
 
       {/* Trace creation */}
       {phase === "creating" ? <TraceCreationUI onSend={onSendTrace} onCancel={function() { setPhase("idle"); }} guided={onbStep <= 3} /> : null}
@@ -1937,7 +1939,7 @@ function IncomingMomentDisplay({ event, pair, onDismiss }) {
 
   // Echo mark from partner
   if (extra.echo_mark) {
-    return <div style={{ position:"absolute",top:"30%",left:"50%",transform:"translate(-50%,-50%)",zIndex:9,pointerEvents:"none",fontFamily:FONT,textAlign:"center" }}>
+    return <div style={{ position:"absolute",top:"30%",left:"50%",transform:"translate(-50%,-50%)",zIndex:38,pointerEvents:"none",fontFamily:FONT,textAlign:"center" }}>
       <div style={{ marginBottom:12,color:"rgba(255,255,255,"+(al*0.18)+")",fontSize:13,letterSpacing:"0.3em",fontWeight:200 }}>A MARK LEFT FOR YOU</div>
       <span style={{ fontSize:42,color:"rgba("+rgb+","+(al*0.5)+")",textShadow:"0 0 25px rgba("+rgb+","+(al*0.15)+")" }}>{extra.echo_mark}</span>
     </div>;
@@ -2251,6 +2253,17 @@ function RevealCanvas({ tone, path, amplified, pulseGesture, onDone }) {
   return <canvas ref={ref} style={{ position:"absolute",inset:0,width:"100%",height:"100%",zIndex:30,pointerEvents:"none" }} />;
 }
 
+function GlimpseWrapper({ contribs, onDone }) {
+  var _t = useState(false), tappable = _t[0], setTappable = _t[1];
+  useEffect(function() {
+    var t = setTimeout(function() { setTappable(true); }, 1000);
+    return function() { clearTimeout(t); };
+  }, []);
+  return <div onClick={tappable ? onDone : undefined} style={{ position:"absolute",inset:0,zIndex:34,cursor:tappable?"pointer":"default" }}>
+    <GlimpseCanvas contribs={contribs} onDone={onDone} />
+  </div>;
+}
+
 function GlimpseCanvas({ contribs, onDone }) {
   var ref = useRef(null), textRef = useRef(pick(GLIMPSE_TEXTS));
   useEffect(function() {
@@ -2259,14 +2272,16 @@ function GlimpseCanvas({ contribs, onDone }) {
     c.width = rect.width * dpr; c.height = rect.height * dpr; ctx.scale(dpr, dpr);
     var w = rect.width, h = rect.height, cx = w/2, cy = h/2, start = Date.now(), dur = 9000, af, gt = textRef.current;
     function draw() {
-      var pr = Math.min(1,(Date.now()-start)/dur), fi = Math.min(1,pr*2), fo = pr>0.7?1-(pr-0.7)/0.3:1, a = fi*fo;
+      try {
+      var pr = Math.min(1,(Date.now()-start)/dur), fi = Math.min(1,pr*3), fo = pr>0.75?1-(pr-0.75)/0.25:1, a = fi*fo;
       ctx.clearRect(0,0,w,h); ctx.fillStyle = "rgba(6,6,12,"+(0.93*a)+")"; ctx.fillRect(0,0,w,h);
-      var baseR = contribs.length<=2?0.25:contribs.length<=5?0.32:0.4;
+      var baseR = contribs.length<=2?0.38:contribs.length<=5?0.44:0.50;
       var vr = Math.min(w,h)*baseR*a;
       if(vr<2){if(pr>=1)setTimeout(onDone,200);else af=requestAnimationFrame(draw);return;}
       ctx.save();ctx.beginPath();ctx.arc(cx,cy,vr,0,Math.PI*2);ctx.clip();
-      drawArtwork(ctx, contribs, w, h, a * 0.7);
+      drawArtwork(ctx, contribs, w, h, Math.min(1, a * 1.4));
       ctx.globalAlpha=1;ctx.globalCompositeOperation="source-over";ctx.restore();
+      } catch(e) { console.error("GlimpseCanvas draw error:", e); }
       var eg=ctx.createRadialGradient(cx,cy,vr*0.6,cx,cy,vr*1.12);eg.addColorStop(0,"transparent");eg.addColorStop(1,"rgba(6,6,12,"+a+")");ctx.fillStyle=eg;ctx.fillRect(0,0,w,h);
       ctx.fillStyle="rgba(255,255,255,"+(0.35*a)+")";ctx.font="200 16px "+FONT;ctx.textAlign="center";ctx.fillText(gt,cx,cy+vr+30);
       if(pr<1)af=requestAnimationFrame(draw);else setTimeout(onDone,200);
