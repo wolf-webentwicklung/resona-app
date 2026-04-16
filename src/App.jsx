@@ -1196,9 +1196,9 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {/* Settings gear */}
       {phase === "idle" ? <div style={{ position:"absolute",top:18,left:0,right:0,zIndex:11,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 18px",pointerEvents:"none" }}>
         <div style={{ display:"flex",alignItems:"center",gap:8,pointerEvents:"none" }}>
-          {partnerHere ? <div style={{ display:"flex",alignItems:"center",gap:5 }}>
-            <div style={{ width:4,height:4,borderRadius:"50%",background:"rgba(212,165,116,0.6)",animation:"gentlePulse 3s ease infinite" }} />
-            <span style={{ color:"rgba(212,165,116,0.3)",fontSize:8,letterSpacing:"0.12em",fontWeight:200 }}>here</span>
+          {partnerHere ? <div style={{ display:"flex",alignItems:"center",gap:7,padding:"4px 12px 4px 8px",borderRadius:16,background:"rgba(212,165,116,0.06)",border:"1px solid rgba(212,165,116,0.1)" }}>
+            <div style={{ width:7,height:7,borderRadius:"50%",background:"rgba(212,165,116,0.7)",boxShadow:"0 0 12px rgba(212,165,116,0.4)",animation:"gentlePulse 3s ease infinite" }} />
+            <span style={{ color:"rgba(212,165,116,0.5)",fontSize:10,letterSpacing:"0.12em",fontWeight:200 }}>here</span>
           </div> : null}
           {dayCount > 1 && !partnerHere ? <span style={{ color:"rgba(255,255,255,0.6)",fontSize:8,letterSpacing:"0.1em",fontWeight:200 }}>day {dayCount}</span> : null}
         </div>
@@ -1375,7 +1375,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {reunionUI === "confirm_reveal" ? <ConfirmOverlay
         title="REVEAL ARTWORK" text={"see everything you\u2019ve created together\nyour person will need to agree too"}
         confirmLabel="SEND REQUEST" confirmColor="212,165,116"
-        onConfirm={function() { proposeReveal(pair.id, user.id).then(function() { setReunionUI(null); }).catch(function(e) { console.error(e); setReunionUI(null); }); }}
+        onConfirm={function() { proposeReveal(pair.id, user.id).then(function() { setReunionUI(null); }).catch(function(e) { console.error(e); setAppError("Failed to send request. Try again."); setReunionUI(null); }); }}
         onCancel={function() { setReunionUI(null); }}
       /> : null}
 
@@ -1383,12 +1383,12 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {reunionUI === "confirm_reset" ? <ConfirmOverlay
         title="START FRESH" text={"all traces and artwork will be cleared\nyou can build something new together\nyour person will need to agree too"}
         confirmLabel="SEND REQUEST" confirmColor="255,255,255"
-        onConfirm={function() { proposeReset(pair.id, user.id).then(function() { setReunionUI(null); }).catch(function(e) { console.error(e); setReunionUI(null); }); }}
+        onConfirm={function() { proposeReset(pair.id, user.id).then(function() { setReunionUI(null); }).catch(function(e) { console.error(e); setAppError("Failed to send request. Try again."); setReunionUI(null); }); }}
         onCancel={function() { setReunionUI(null); }}
       /> : null}
 
       {/* Incoming: Reunion */}
-      {reunionUI === "incoming_reunion" && reunion ? <ReunionIncoming reunion={reunion} onRespond={function(accept) { respondToProposal(reunion.id, accept).then(function() { setReunionUI(null); if (accept) setReunion(Object.assign({}, reunion, { status: "accepted" })); }); }} /> : null}
+      {reunionUI === "incoming_reunion" && reunion ? <ReunionIncoming reunion={reunion} onRespond={function(accept) { respondToProposal(reunion.id, accept).then(function() { setReunionUI(null); if (accept) setReunion(Object.assign({}, reunion, { status: "accepted" })); }).catch(function(e) { console.error("Respond error:", e); setAppError("Failed to respond. Try again."); setReunionUI(null); }); }} /> : null}
 
       {/* Incoming: Reset */}
       {reunionUI === "incoming_reset" && reunion ? <ResetIncoming onRespond={function(accept) {
@@ -1397,17 +1397,17 @@ function ResonanceSpace({ user, pair, onDissolve }) {
             executeResetArtwork(pair.id).then(function() {
               completeProposal(reunion.id).catch(function(){});
               setContribs([]); setRecTones([]); setReunion(null); setReunionUI(null);
-            }).catch(function(e) { console.error("Reset error:", e); setReunionUI(null); });
+            }).catch(function(e) { console.error("Reset error:", e); setAppError("Reset failed. Try again."); setReunionUI(null); });
           } else { setReunionUI(null); }
-        });
+        }).catch(function(e) { console.error("Respond error:", e); setAppError("Failed to respond. Try again."); setReunionUI(null); });
       }} /> : null}
 
       {/* Incoming: Reveal */}
       {reunionUI === "incoming_reveal" && reunion ? <ConfirmOverlay
         title="REVEAL ARTWORK" text={"your person wants to see\nwhat you\u2019ve created together"}
         confirmLabel="REVEAL" confirmColor="212,165,116" cancelLabel="NOT YET"
-        onConfirm={function() { respondToProposal(reunion.id, true).then(function() { setReunion(Object.assign({}, reunion, { status: "accepted" })); setReunionUI("reveal"); }); }}
-        onCancel={function() { respondToProposal(reunion.id, false).then(function() { setReunionUI(null); }); }}
+        onConfirm={function() { respondToProposal(reunion.id, true).then(function() { setReunion(Object.assign({}, reunion, { status: "accepted" })); setReunionUI("reveal"); }).catch(function(e) { console.error("Reveal respond error:", e); setAppError("Failed to respond. Try again."); setReunionUI(null); }); }}
+        onCancel={function() { respondToProposal(reunion.id, false).then(function() { setReunionUI(null); }).catch(function(e) { console.error("Decline error:", e); setReunionUI(null); }); }}
       /> : null}
 
       {/* Artwork Reveal */}
@@ -1618,7 +1618,7 @@ function WhisperDisplayUI({ word, rgb, onDone }) {
   var _a = useState(0), al = _a[0], sa = _a[1];
   useEffect(function() { var s = Date.now(); var iv = setInterval(function() { var pr = (Date.now()-s)/4000; if (pr >= 1) { clearInterval(iv); onDone(); } else sa(pr<0.15?pr/0.15:pr>0.7?1-(pr-0.7)/0.3:1); }, 30); return function() { clearInterval(iv); }; }, [onDone]);
   return <div style={{ position:"absolute",top:"38%",left:0,right:0,textAlign:"center",zIndex:38,pointerEvents:"none",fontFamily:FONT }}>
-    <div style={{ marginBottom:10,color:"rgba(255,255,255,"+(al*0.15)+")",fontSize:8,letterSpacing:"0.25em",fontWeight:200 }}>YOUR WHISPER</div>
+    <div style={{ marginBottom:10,color:"rgba(255,255,255,"+(al*0.15)+")",fontSize:8,letterSpacing:"0.25em",fontWeight:200 }}>SENT TO YOUR PERSON</div>
     <span style={{ fontSize:30,fontWeight:200,letterSpacing:"0.35em",color:"rgba("+rgb+","+(al*0.7)+")",textShadow:"0 0 35px rgba("+rgb+","+(al*0.25)+")" }}>{word}</span>
   </div>;
 }
