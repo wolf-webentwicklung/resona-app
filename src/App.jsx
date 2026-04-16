@@ -25,8 +25,8 @@ function Welcome({ onStart }) {
   return (
     <div style={{ position:"absolute",inset:0,zIndex:50,background:"#0A0A12",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,cursor:"pointer",opacity:al,transition:"opacity 1s ease" }} onClick={function() { initAudio(); if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); onStart(); }}>
       <div style={{ marginBottom:60 }}>
-        <div style={{ fontSize:24,fontWeight:200,letterSpacing:"0.5em",color:"rgba(255,255,255,0.2)",marginBottom:16,textAlign:"center" }}>RESONANCE</div>
-        <div style={{ fontSize:12,fontWeight:200,letterSpacing:"0.15em",color:"rgba(255,255,255,0.12)",textAlign:"center",lineHeight:1.8 }}>
+        <div style={{ fontSize:24,fontWeight:200,letterSpacing:"0.5em",color:"rgba(255,255,255,0.35)",marginBottom:16,textAlign:"center" }}>RESONANCE</div>
+        <div style={{ fontSize:12,fontWeight:200,letterSpacing:"0.15em",color:"rgba(255,255,255,0.25)",textAlign:"center",lineHeight:1.8 }}>
           a private space<br/>for two people<br/>to feel each other<br/>without words
         </div>
       </div>
@@ -68,12 +68,12 @@ function Onboarding({ onDone }) {
   return (
     <div onClick={advance} style={{ position:"absolute",inset:0,zIndex:50,background:"#0A0A12",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,cursor:"pointer",opacity:al,transition:"opacity 0.4s ease" }}>
       <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(255,255,255,0.3)",marginBottom:40 }} />
-      <div style={{ fontSize:14,fontWeight:200,letterSpacing:"0.2em",color:"rgba(255,255,255,0.35)",marginBottom:20,textAlign:"center" }}>{s.title}</div>
-      <div style={{ fontSize:11,fontWeight:200,letterSpacing:"0.08em",color:"rgba(255,255,255,0.15)",textAlign:"center",lineHeight:2,whiteSpace:"pre-line" }}>{s.body}</div>
+      <div style={{ fontSize:14,fontWeight:200,letterSpacing:"0.2em",color:"rgba(255,255,255,0.5)",marginBottom:20,textAlign:"center" }}>{s.title}</div>
+      <div style={{ fontSize:11,fontWeight:200,letterSpacing:"0.08em",color:"rgba(255,255,255,0.28)",textAlign:"center",lineHeight:2,whiteSpace:"pre-line" }}>{s.body}</div>
       <div style={{ position:"absolute",bottom:60,display:"flex",gap:8 }}>
         {steps.map(function(_, i) { return <div key={i} style={{ width:i===step?16:4,height:4,borderRadius:2,background:i===step?"rgba(255,255,255,0.25)":"rgba(255,255,255,0.08)",transition:"all 0.3s" }} />; })}
       </div>
-      <div style={{ position:"absolute",bottom:30,color:"rgba(255,255,255,0.12)",fontSize:9,letterSpacing:"0.15em",fontWeight:200 }}>{step < steps.length - 1 ? "tap to continue" : "tap to start"}</div>
+      <div style={{ position:"absolute",bottom:30,color:"rgba(255,255,255,0.25)",fontSize:9,letterSpacing:"0.15em",fontWeight:200 }}>{step < steps.length - 1 ? "tap to continue" : "tap to start"}</div>
     </div>
   );
 }
@@ -130,7 +130,7 @@ function PairSetup({ onPaired, userId }) {
 
   return (
     <div style={{ position:"absolute",inset:0,zIndex:50,background:"#0A0A12",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT }}>
-      <div style={{ fontSize:16,fontWeight:200,letterSpacing:"0.35em",color:"rgba(255,255,255,0.18)",marginBottom:50 }}>RESONANCE</div>
+      <div style={{ fontSize:16,fontWeight:200,letterSpacing:"0.35em",color:"rgba(255,255,255,0.3)",marginBottom:50 }}>RESONANCE</div>
       {err ? <div style={{ color:"rgba(196,30,58,0.6)",fontSize:10,marginBottom:20,letterSpacing:"0.1em" }}>{err}</div> : null}
       {mode === "choose" ? (
         <div style={{ display:"flex",flexDirection:"column",gap:20,alignItems:"center" }}>
@@ -142,7 +142,7 @@ function PairSetup({ onPaired, userId }) {
         <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:20 }}>
           <div style={{ color:"rgba(255,255,255,0.25)",fontSize:10,letterSpacing:"0.2em",fontWeight:200 }}>SHARE THIS CODE</div>
           <div style={{ fontSize:32,fontWeight:300,letterSpacing:"0.4em",color:"rgba(255,255,255,0.6)",padding:"16px 32px",borderRadius:12,background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)" }}>{invite}</div>
-          <div style={{ color:"rgba(255,255,255,0.15)",fontSize:9,letterSpacing:"0.15em",fontWeight:200 }}>waiting for your person to join{"\u2026"}</div>
+          <div style={{ color:"rgba(255,255,255,0.28)",fontSize:9,letterSpacing:"0.15em",fontWeight:200 }}>waiting for your person to join{"\u2026"}</div>
           <div style={{ width:4,height:4,borderRadius:"50%",background:"rgba(255,255,255,0.2)",animation:"gentlePulse 2s ease infinite",marginTop:10 }}/>
         </div>
       ) : (
@@ -324,27 +324,45 @@ function ResonanceSpace({ user, pair, onDissolve }) {
           handleIncomingEvent(unseen[0]);
         }
 
-        // Check for active reunion
+        // Check for active proposals (priority: reunion date > reveal > reset)
         try {
+          var foundUI = null;
+          // Reunion
           var reu = await getActiveProposal(pair.id, 'reunion');
           if (reu) {
             setReunion(reu);
             if (reu.status === "accepted") {
               var today = new Date().toISOString().slice(0, 10);
-              if (reu.proposed_date <= today) {
-                setReunionUI("reveal");
+              var seen = false; try { seen = !!sessionStorage.getItem("seen_reveal_" + reu.id); } catch(e) {}
+              if (reu.proposed_date <= today && !seen) {
+                foundUI = "reveal";
               }
             }
-            if (reu.status === "pending" && reu.proposed_by !== user.id) {
-              setReunionUI("incoming_reunion");
+            if (!foundUI && reu.status === "pending" && reu.proposed_by !== user.id) {
+              foundUI = "incoming_reunion";
             }
           }
-          // Check for active reset proposal
-          var rst = await getActiveProposal(pair.id, 'reset');
-          if (rst && rst.status === "pending" && rst.proposed_by !== user.id) {
-            setReunionUI("incoming_reset");
-            setReunion(rst); // reuse reunion state for the proposal
+          // Manual reveal (only if nothing higher-priority found)
+          if (!foundUI) {
+            var rev = await getActiveProposal(pair.id, 'reveal');
+            if (rev) {
+              if (rev.status === "accepted") {
+                var revSeen = false; try { revSeen = !!sessionStorage.getItem("seen_reveal_" + rev.id); } catch(e) {}
+                if (!revSeen) { setReunion(rev); foundUI = "reveal"; }
+              }
+              if (!foundUI && rev.status === "pending" && rev.proposed_by !== user.id) {
+                setReunion(rev); foundUI = "incoming_reveal";
+              }
+            }
           }
+          // Reset (only if nothing higher-priority found)
+          if (!foundUI) {
+            var rst = await getActiveProposal(pair.id, 'reset');
+            if (rst && rst.status === "pending" && rst.proposed_by !== user.id) {
+              setReunion(rst); foundUI = "incoming_reset";
+            }
+          }
+          if (foundUI) setReunionUI(foundUI);
         } catch (e) { /* table might not exist yet */ }
       } catch (e) {
         console.error("Init error:", e);
@@ -369,6 +387,10 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         setPhase("discovery");
         soundIncoming();
         hapticMedium();
+      }
+      // Browser notification when in background
+      if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
+        try { new Notification('Resonance', { body: 'someone left something for you', icon: '/icon-192.png', tag: 'trace' }); } catch (e) {}
       }
     });
     return function() { sub.unsubscribe(); };
@@ -500,17 +522,6 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     });
     return function() { supabase.removeChannel(ch); };
   }, [pair, user]);
-
-  // ── Browser notification when trace arrives in background ──
-  useEffect(function() {
-    if (!user) return;
-    var sub = subscribeToTraces(user.id, function() {
-      if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
-        try { new Notification('Resonance', { body: 'someone left something for you', icon: '/icon-192.png', tag: 'trace' }); } catch (e) {}
-      }
-    });
-    return function() { sub.unsubscribe(); };
-  }, [user]);
 
   // ── Passive reveal timer (with notice) ──
   useEffect(function() {
@@ -932,13 +943,13 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       <div style={{ position:"absolute",top:22,left:0,right:0,textAlign:"center",zIndex:10,pointerEvents:"none",fontFamily:FONT }}>
         {phase === "discovery" && trace ? <div style={{ animation:"fadeIn 1s ease" }}>
           <span style={{ color:"rgba("+trRgb+",0.65)",fontSize:12,letterSpacing:"0.28em",fontWeight:300,textShadow:"0 0 25px rgba("+trRgb+",0.2)" }}>SOMETHING IS HERE</span>
-          {onbStep === 0 ? <div style={{ marginTop:6,color:"rgba(255,255,255,0.18)",fontSize:9,letterSpacing:"0.15em",fontWeight:200 }}>someone left something for you</div> : null}
+          {onbStep === 0 ? <div style={{ marginTop:6,color:"rgba(255,255,255,0.3)",fontSize:9,letterSpacing:"0.15em",fontWeight:200 }}>someone left something for you</div> : null}
         </div> : null}
 
         {/* Idle status indicator */}
         {phase === "idle" && !canSend && sentTone ? null /* "YOUR TRACE IS OUT THERE" shown at bottom */ : null}
         {phase === "idle" && !canSend && !sentTone && contribs.length === 0 ? <div style={{ animation:"fadeIn 2s ease",marginTop:8 }}>
-          <span style={{ color:"rgba(255,255,255,0.12)",fontSize:10,letterSpacing:"0.2em",fontWeight:200 }}>waiting for your first trace</span>
+          <span style={{ color:"rgba(255,255,255,0.25)",fontSize:10,letterSpacing:"0.2em",fontWeight:200 }}>waiting for your first trace</span>
         </div> : null}
       </div>
 
@@ -1026,7 +1037,9 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
       {/* Artwork Reveal */}
       {reunionUI === "reveal" ? <ReunionReveal contribs={contribs} reunion={reunion} onDone={function() {
-        if (reunion) completeProposal(reunion.id).catch(function(){});
+        // Don't completeProposal here — partner might still be watching
+        // Mark as seen locally so it doesn't re-trigger on reload
+        if (reunion) { try { sessionStorage.setItem("seen_reveal_" + reunion.id, "1"); } catch(e) {} }
         setReunionUI("post_reveal");
       }} /> : null}
 
