@@ -235,3 +235,66 @@ export function subscribeToEvents(pairId, callback) {
     })
     .subscribe();
 }
+
+// ══════════════════════════════════════
+// PAIR PROPOSALS (Reunions + Artwork Resets)
+// ══════════════════════════════════════
+
+export async function getActiveProposal(pairId, type) {
+  const { data } = await supabase
+    .from('pair_proposals')
+    .select('*')
+    .eq('pair_id', pairId)
+    .eq('type', type)
+    .in('status', ['pending', 'accepted'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single();
+  return data;
+}
+
+export async function proposeReunion(pairId, userId, date) {
+  await supabase.from('pair_proposals')
+    .update({ status: 'declined' })
+    .eq('pair_id', pairId).eq('type', 'reunion').eq('status', 'pending');
+  const { data, error } = await supabase.from('pair_proposals').insert({
+    pair_id: pairId, proposed_by: userId, type: 'reunion', proposed_date: date, status: 'pending',
+  }).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function proposeReset(pairId, userId) {
+  await supabase.from('pair_proposals')
+    .update({ status: 'declined' })
+    .eq('pair_id', pairId).eq('type', 'reset').eq('status', 'pending');
+  const { data, error } = await supabase.from('pair_proposals').insert({
+    pair_id: pairId, proposed_by: userId, type: 'reset', status: 'pending',
+  }).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function respondToProposal(proposalId, accept) {
+  const { error } = await supabase.from('pair_proposals')
+    .update({ status: accept ? 'accepted' : 'declined', responded_at: new Date().toISOString() })
+    .eq('id', proposalId);
+  if (error) throw error;
+}
+
+export async function completeProposal(proposalId) {
+  await supabase.from('pair_proposals').update({ status: 'completed' }).eq('id', proposalId);
+}
+
+export async function executeResetArtwork(pairId) {
+  const { error } = await supabase.rpc('reset_artwork', { p_pair_id: pairId });
+  if (error) throw error;
+}
+
+export function subscribeToProposals(pairId, callback) {
+  return supabase
+    .channel('proposals-' + pairId)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'pair_proposals', filter: 'pair_id=eq.' + pairId },
+      (payload) => { callback(payload.new, payload.eventType); })
+    .subscribe();
+}

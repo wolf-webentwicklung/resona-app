@@ -3,9 +3,9 @@ import {
   ensureUser, getPair, getPartnerId, createPair, joinPair,
   canSendTrace, sendTrace, getPendingTrace, discoverTrace,
   getArtwork, dissolvePair,
-  subscribeToTraces, subscribeToEvents,
+  subscribeToTraces, subscribeToEvents, subscribeToPair,
   getUnseenEvents, markEventSeen,
-  supabase
+  getActiveProposal, proposeReunion, proposeReset, respondToProposal, completeProposal, executeResetArtwork, subscribeToProposals
 } from './lib/supabase.js';
 import { detectMoment, persistMoment } from './lib/moments.js';
 import {
@@ -30,6 +30,47 @@ function Welcome({ onStart }) {
       <div style={{ padding:"14px 40px",borderRadius:28,border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.03)" }}>
         <span style={{ color:"rgba(255,255,255,0.4)",fontSize:12,letterSpacing:"0.2em",fontWeight:200 }}>BEGIN</span>
       </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════
+// ONBOARDING — brief explanation
+// ══════════════════════════════════════
+function Onboarding({ onDone }) {
+  var _s = useState(0), step = _s[0], setStep = _s[1];
+  var _a = useState(0), al = _a[0], setAl = _a[1];
+
+  var steps = [
+    { title: "draw what you feel", body: "choose an emotional tone\nand draw a gesture with your finger" },
+    { title: "your person discovers it", body: "your trace appears in their space\nthey search for it and reveal it" },
+    { title: "something grows between you", body: "every trace becomes part of\nan invisible shared artwork" },
+  ];
+
+  useEffect(function() {
+    setAl(0);
+    var t = setTimeout(function() { setAl(1); }, 50);
+    return function() { clearTimeout(t); };
+  }, [step]);
+
+  var advance = function() {
+    setAl(0);
+    setTimeout(function() {
+      if (step < steps.length - 1) setStep(step + 1);
+      else onDone();
+    }, 300);
+  };
+
+  var s = steps[step];
+  return (
+    <div onClick={advance} style={{ position:"absolute",inset:0,zIndex:50,background:"#0A0A12",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,cursor:"pointer",opacity:al,transition:"opacity 0.4s ease" }}>
+      <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(255,255,255,0.3)",marginBottom:40 }} />
+      <div style={{ fontSize:14,fontWeight:200,letterSpacing:"0.2em",color:"rgba(255,255,255,0.35)",marginBottom:20,textAlign:"center" }}>{s.title}</div>
+      <div style={{ fontSize:11,fontWeight:200,letterSpacing:"0.08em",color:"rgba(255,255,255,0.15)",textAlign:"center",lineHeight:2,whiteSpace:"pre-line" }}>{s.body}</div>
+      <div style={{ position:"absolute",bottom:60,display:"flex",gap:8 }}>
+        {steps.map(function(_, i) { return <div key={i} style={{ width:i===step?16:4,height:4,borderRadius:2,background:i===step?"rgba(255,255,255,0.25)":"rgba(255,255,255,0.08)",transition:"all 0.3s" }} />; })}
+      </div>
+      <div style={{ position:"absolute",bottom:30,color:"rgba(255,255,255,0.12)",fontSize:9,letterSpacing:"0.15em",fontWeight:200 }}>{step < steps.length - 1 ? "tap to continue" : "tap to start"}</div>
     </div>
   );
 }
@@ -149,7 +190,8 @@ export default function App() {
     })();
   }, []);
 
-  var handleStart = useCallback(function() { setAppPhase("pairing"); }, []);
+  var handleStart = useCallback(function() { setAppPhase("onboarding"); }, []);
+  var handleOnboardingDone = useCallback(function() { setAppPhase("pairing"); }, []);
   var handlePaired = useCallback(async function(pairId) {
     var p = await getPair(user.id);
     setPair(p);
@@ -177,6 +219,7 @@ export default function App() {
   }
 
   if (appPhase === "welcome") return <Welcome onStart={handleStart} />;
+  if (appPhase === "onboarding") return <Onboarding onDone={handleOnboardingDone} />;
   if (appPhase === "pairing") return <PairSetup onPaired={handlePaired} userId={user ? user.id : null} />;
   return <ResonanceSpace user={user} pair={pair} onDissolve={handleDissolve} />;
 }
@@ -217,6 +260,13 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   // ── Passive reveal notice ──
   var _prn = useState(false), passiveNotice = _prn[0], setPassiveNotice = _prn[1];
+
+  // ── Dissolved by partner ──
+  var _dis = useState(false), dissolved = _dis[0], setDissolved = _dis[1];
+
+  // ── Reunion (artwork reveal date) ──
+  var _reu = useState(null), reunion = _reu[0], setReunion = _reu[1];
+  var _reuUI = useState(null), reunionUI = _reuUI[0], setReunionUI = _reuUI[1]; // "propose" | "incoming" | "reveal" | null
 
   var cvRef = useRef(null);
   var nf1 = useRef(makeNoise()), nf2 = useRef(makeNoise()), nf3 = useRef(makeNoise());
@@ -266,6 +316,29 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         if (unseen.length > 0) {
           handleIncomingEvent(unseen[0]);
         }
+
+        // Check for active reunion
+        try {
+          var reu = await getActiveProposal(pair.id, 'reunion');
+          if (reu) {
+            setReunion(reu);
+            if (reu.status === "accepted") {
+              var today = new Date().toISOString().slice(0, 10);
+              if (reu.proposed_date <= today) {
+                setReunionUI("reveal");
+              }
+            }
+            if (reu.status === "pending" && reu.proposed_by !== user.id) {
+              setReunionUI("incoming_reunion");
+            }
+          }
+          // Check for active reset proposal
+          var rst = await getActiveProposal(pair.id, 'reset');
+          if (rst && rst.status === "pending" && rst.proposed_by !== user.id) {
+            setReunionUI("incoming_reset");
+            setReunion(rst); // reuse reunion state for the proposal
+          }
+        } catch (e) { /* table might not exist yet */ }
       } catch (e) {
         console.error("Init error:", e);
         setAppError("Failed to load. Pull down to retry.");
@@ -303,6 +376,64 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     });
     return function() { sub.unsubscribe(); };
   }, [pair, user, handleIncomingEvent]);
+
+  // ── Realtime: detect if partner dissolved the connection ──
+  useEffect(function() {
+    if (!pair) return;
+    var sub = subscribeToPair(pair.id, function(updatedPair) {
+      if (updatedPair.status === "dissolved") {
+        setDissolved(true);
+      }
+    });
+    return function() { sub.unsubscribe(); };
+  }, [pair]);
+
+  // ── Realtime: reunion changes ──
+  useEffect(function() {
+    if (!pair) return;
+    var sub = subscribeToProposals(pair.id, function(proposal) {
+      if (!proposal) return;
+      if (proposal.type === 'reunion') {
+        setReunion(proposal);
+        if (proposal.status === "pending" && proposal.proposed_by !== user.id) {
+          setReunionUI("incoming_reunion");
+        }
+        if (proposal.status === "accepted") {
+          var today = new Date().toISOString().slice(0, 10);
+          if (proposal.proposed_date <= today) setReunionUI("reveal");
+          else setReunionUI(null);
+        }
+        if (proposal.status === "declined" || proposal.status === "completed") {
+          setReunionUI(null);
+        }
+      }
+      if (proposal.type === 'reset') {
+        if (proposal.status === "pending" && proposal.proposed_by !== user.id) {
+          setReunion(proposal);
+          setReunionUI("incoming_reset");
+        }
+        if (proposal.status === "accepted") {
+          // Partner accepted the reset — execute it
+          executeResetArtwork(pair.id).then(function() {
+            completeProposal(proposal.id).catch(function(){});
+            setContribs([]);
+            setRecTones([]);
+            setReunion(null);
+            setReunionUI(null);
+          }).catch(function(e) { console.error("Reset failed:", e); });
+        }
+        if (proposal.status === "declined" || proposal.status === "completed") {
+          setReunionUI(null);
+          // If completed, clear artwork locally too
+          if (proposal.status === "completed") {
+            setContribs([]);
+            setRecTones([]);
+          }
+        }
+      }
+    });
+    return function() { sub.unsubscribe(); };
+  }, [pair, user]);
 
   // ── Reconnection on visibility change ──
   useEffect(function() {
@@ -373,8 +504,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
       ctx.fillStyle = "#0A0A12"; ctx.fillRect(0, 0, w, h);
 
-      // 3-layer noise
-      var breath = Math.sin(t * 0.4) * 0.25 + 0.55, step = 7, rr = 10, rg = 10, rb = 18;
+      // 3-layer noise — smooth organic atmosphere
+      var breath = Math.sin(t * 0.4) * 0.25 + 0.55, step = 5, rr = 10, rg = 10, rb = 18;
       if (rt.length > 0) {
         var t2 = 0, g2 = 0, b2 = 0;
         rt.forEach(function(tn) { if (TONES[tn]) { t2 += TONES[tn].rgb[0]; g2 += TONES[tn].rgb[1]; b2 += TONES[tn].rgb[2]; } });
@@ -390,8 +521,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         var nv = ((n1(x*0.002+t*0.08,y*0.002+t*0.06)*0.45 + n2(x*0.004+t*0.04+30,y*0.004-t*0.05+30)*0.35 + n3(x*0.008+t*0.12+60,y*0.008+t*0.09+60)*0.2)+1)/2*breath;
         var cr2 = rr, cg2 = rg, cb2 = rb;
         if (dT > 0 && tr) { var dr2 = TONES[tr.emotional_tone].rgb; cr2 = lerp(cr2,dr2[0],dT); cg2 = lerp(cg2,dr2[1],dT); cb2 = lerp(cb2,dr2[2],dT); }
-        var lum = nv * (0.06 + bB);
-        ctx.fillStyle = "rgb(" + Math.round(cr2+lum*46) + "," + Math.round(cg2+lum*36) + "," + Math.round(cb2+lum*58) + ")";
+        var lum = nv * (0.05 + bB);
+        ctx.fillStyle = "rgb(" + Math.round(cr2+lum*32) + "," + Math.round(cg2+lum*26) + "," + Math.round(cb2+lum*40) + ")";
         ctx.fillRect(x, y, step, step);
       }}
 
@@ -619,7 +750,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
   var bottomColor = lastTone ? TONES[lastTone].primary : "rgba(255,255,255,0.2)";
 
   return (
-    <div style={{ width:"100%",height:"100vh",position:"relative",overflow:"hidden",background:"#0A0A12",userSelect:"none",WebkitUserSelect:"none" }}>
+    <div style={{ width:"100%",height:"100vh",position:"relative",overflow:"hidden",background:"#0A0A12",userSelect:"none",WebkitUserSelect:"none",paddingTop:"env(safe-area-inset-top)",paddingBottom:"env(safe-area-inset-bottom)" }}>
       <canvas ref={cvRef} style={{ position:"absolute",inset:0,width:"100%",height:"100%",touchAction:"none",cursor:phase==="discovery"?"crosshair":"default" }}
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} />
 
@@ -627,6 +758,17 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {appError ? <div style={{ position:"absolute",top:50,left:"50%",transform:"translateX(-50%)",zIndex:60,padding:"10px 20px",borderRadius:12,background:"rgba(196,30,58,0.12)",border:"1px solid rgba(196,30,58,0.2)",fontFamily:FONT,animation:"fadeIn 0.5s ease" }}>
         <span style={{ color:"rgba(196,30,58,0.7)",fontSize:10,letterSpacing:"0.05em",fontWeight:300 }}>{appError}</span>
       </div> : null}
+
+      {/* Dissolved by partner overlay */}
+      {dissolved ? <div style={{ position:"absolute",inset:0,zIndex:70,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 1s ease" }}>
+        <div style={{ width:3,height:3,borderRadius:"50%",background:"rgba(255,255,255,0.3)",marginBottom:24 }} />
+        <div style={{ color:"rgba(255,255,255,0.25)",fontSize:11,letterSpacing:"0.2em",fontWeight:200,marginBottom:12 }}>CONNECTION DISSOLVED</div>
+        <div style={{ color:"rgba(255,255,255,0.12)",fontSize:10,letterSpacing:"0.08em",fontWeight:200,lineHeight:1.8,textAlign:"center",marginBottom:40 }}>your person ended the connection</div>
+        <div onClick={function() { window.location.reload(); }} style={{ padding:"14px 40px",borderRadius:24,border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.03)",cursor:"pointer",color:"rgba(255,255,255,0.4)",fontSize:12,letterSpacing:"0.18em",fontWeight:200 }}>START OVER</div>
+      </div> : null}
+
+      {/* PWA install prompt (only in browser, not standalone) */}
+      <InstallPrompt />
 
       {/* Settings gear */}
       {phase === "idle" ? <div onClick={function() { setShowSettings(true); }} style={{ position:"absolute",top:18,right:18,zIndex:11,cursor:"pointer",opacity:0.15,fontSize:18,color:"white" }}>{"\u2699"}</div> : null}
@@ -636,6 +778,29 @@ function ResonanceSpace({ user, pair, onDissolve }) {
           <div style={{ width:32,height:3,borderRadius:2,background:"rgba(255,255,255,0.15)",margin:"0 auto 24px" }} />
           <div style={{ color:"rgba(255,255,255,0.2)",fontSize:9,letterSpacing:"0.25em",fontWeight:200,marginBottom:20 }}>SETTINGS</div>
           <div style={{ color:"rgba(255,255,255,0.12)",fontSize:9,letterSpacing:"0.08em",fontWeight:200,marginBottom:16 }}>Connected as a pair</div>
+
+          {/* Reunion */}
+          <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.05)" }}>
+            {reunion && reunion.status === "accepted" ? (
+              <div style={{ color:"rgba(212,165,116,0.5)",fontSize:11,fontWeight:200,letterSpacing:"0.1em" }}>
+                Reunion: {new Date(reunion.proposed_date + "T00:00:00").toLocaleDateString(undefined, { day:"numeric",month:"long" })}
+              </div>
+            ) : reunion && reunion.status === "pending" && reunion.proposed_by === user.id ? (
+              <div style={{ color:"rgba(255,255,255,0.2)",fontSize:11,fontWeight:200,letterSpacing:"0.1em" }}>
+                Waiting for your person to accept{"\u2026"}
+              </div>
+            ) : (
+              <div onClick={function() { setShowSettings(false); setReunionUI("propose"); }} style={{ color:"rgba(212,165,116,0.5)",fontSize:11,fontWeight:200,letterSpacing:"0.1em",cursor:"pointer" }}>
+                Plan a Reunion
+              </div>
+            )}
+          </div>
+
+          {/* Dissolve */}
+          {contribs.length > 0 ? <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.05)" }}>
+            <div onClick={function() { setShowSettings(false); proposeReset(pair.id, user.id).catch(function(e) { console.error(e); }); }} style={{ color:"rgba(255,255,255,0.25)",fontSize:11,fontWeight:200,letterSpacing:"0.1em",cursor:"pointer" }}>Start Fresh</div>
+            <div style={{ color:"rgba(255,255,255,0.08)",fontSize:9,fontWeight:200,marginTop:6 }}>both need to agree · artwork will be cleared</div>
+          </div> : null}
           <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.05)" }}>
             <div onClick={function() { if (confirm("Dissolve this connection? This cannot be undone.")) { setShowSettings(false); onDissolve(); } }} style={{ color:"rgba(196,30,58,0.5)",fontSize:11,fontWeight:200,letterSpacing:"0.1em",cursor:"pointer" }}>Dissolve Connection</div>
           </div>
@@ -696,6 +861,27 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {/* Incoming partner moment display */}
       {incomingMoment ? <IncomingMomentDisplay event={incomingMoment} pair={pair} onDismiss={dismissIncoming} /> : null}
 
+      {/* Proposal overlays */}
+      {reunionUI === "propose" ? <ReunionPropose pair={pair} user={user} onDone={function(reu) { if (reu) setReunion(reu); setReunionUI(null); }} /> : null}
+      {reunionUI === "incoming_reunion" && reunion ? <ReunionIncoming reunion={reunion} onRespond={function(accept) { respondToProposal(reunion.id, accept).then(function() { setReunionUI(null); if (accept) setReunion(Object.assign({}, reunion, { status: "accepted" })); }); }} /> : null}
+      {reunionUI === "incoming_reset" && reunion ? <ResetIncoming onRespond={function(accept) {
+        respondToProposal(reunion.id, accept).then(function() {
+          if (accept) {
+            executeResetArtwork(pair.id).then(function() {
+              completeProposal(reunion.id).catch(function(){});
+              setContribs([]); setRecTones([]); setReunion(null); setReunionUI(null);
+            }).catch(function(e) { console.error("Reset error:", e); setReunionUI(null); });
+          } else { setReunionUI(null); }
+        });
+      }} /> : null}
+      {reunionUI === "reveal" && reunion ? <ReunionReveal contribs={contribs} reunion={reunion} onDone={function() {
+        completeProposal(reunion.id).catch(function(){});
+        setReunionUI("post_reveal");
+      }} /> : null}
+      {reunionUI === "post_reveal" ? <PostRevealPrompt onStartFresh={function() {
+        proposeReset(pair.id, user.id).then(function() { setReunionUI(null); }).catch(function(e) { console.error(e); setReunionUI(null); });
+      }} onKeep={function() { setReunion(null); setReunionUI(null); }} /> : null}
+
       {/* Bottom affordance */}
       {phase === "idle" || phase === "discovery" ? (
         <div style={{ position:"absolute",bottom:0,left:0,right:0,zIndex:10,fontFamily:FONT }}>
@@ -750,6 +936,53 @@ function IncomingMomentDisplay({ event, pair, onDismiss }) {
   // Pulse gesture — subtle indicator
   return <div style={{ position:"absolute",top:22,left:0,right:0,textAlign:"center",zIndex:38,pointerEvents:"none",fontFamily:FONT }}>
     <span style={{ color:"rgba("+rgb+","+(al*0.4)+")",fontSize:10,letterSpacing:"0.2em",fontWeight:200 }}>something resonated</span>
+  </div>;
+}
+
+
+// ══════════════════════════════════════
+// PWA INSTALL PROMPT
+// Shows a subtle banner when not installed as PWA
+// ══════════════════════════════════════
+function InstallPrompt() {
+  var _s = useState(false), show = _s[0], setShow = _s[1];
+  var _dismissed = useState(false), dismissed = _dismissed[0], setDismissed = _dismissed[1];
+
+  useEffect(function() {
+    // Don't show if already in standalone mode or dismissed before
+    var isStandalone = window.matchMedia("(display-mode: standalone)").matches
+      || window.navigator.standalone === true;
+    if (isStandalone) return;
+
+    // Check if user dismissed recently (use sessionStorage so it comes back next session)
+    try { if (sessionStorage.getItem("resonance_install_dismissed")) return; } catch(e) {}
+
+    // Show after 10 seconds
+    var t = setTimeout(function() { setShow(true); }, 10000);
+    return function() { clearTimeout(t); };
+  }, []);
+
+  var dismiss = useCallback(function() {
+    setDismissed(true);
+    setShow(false);
+    try { sessionStorage.setItem("resonance_install_dismissed", "1"); } catch(e) {}
+  }, []);
+
+  if (!show || dismissed) return null;
+
+  var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  var hint = isIOS
+    ? "Tap \u{FF0B} then \u201CAdd to Home Screen\u201D"
+    : "Tap \u22EE then \u201CAdd to Home Screen\u201D";
+
+  return <div style={{ position:"absolute",bottom:16,left:16,right:16,zIndex:55,fontFamily:FONT,animation:"fadeIn 1s ease" }}>
+    <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 18px",borderRadius:16,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.06)",backdropFilter:"blur(10px)",WebkitBackdropFilter:"blur(10px)" }}>
+      <div>
+        <div style={{ color:"rgba(255,255,255,0.35)",fontSize:10,letterSpacing:"0.1em",fontWeight:300,marginBottom:4 }}>Install Resonance</div>
+        <div style={{ color:"rgba(255,255,255,0.18)",fontSize:9,fontWeight:200 }}>{hint}</div>
+      </div>
+      <div onClick={dismiss} style={{ color:"rgba(255,255,255,0.2)",fontSize:16,cursor:"pointer",padding:"4px 8px" }}>{"\u2715"}</div>
+    </div>
   </div>;
 }
 
@@ -926,5 +1159,168 @@ function TraceCreationUI({ onSend, onCancel, guided }) {
     <div style={{ flex:1,position:"relative",cursor:"crosshair",touchAction:"none" }} onPointerDown={oD} onPointerMove={oM} onPointerUp={oU}>
       <canvas ref={cv} style={{ position:"absolute",inset:0,width:"100%",height:"100%" }} />
     </div>
+  </div>;
+}
+
+
+// ══════════════════════════════════════
+// REUNION — Propose a date
+// ══════════════════════════════════════
+function ReunionPropose({ pair, user, onDone }) {
+  var _d = useState(""), dateVal = _d[0], setDateVal = _d[1];
+  var _s = useState(false), sending = _s[0], setSending = _s[1];
+
+  var today = new Date().toISOString().slice(0, 10);
+  var submit = async function() {
+    if (!dateVal || dateVal <= today) return;
+    setSending(true);
+    try {
+      var reu = await proposeReunion(pair.id, user.id, dateVal);
+      onDone(reu);
+    } catch (e) {
+      console.error("Reunion propose error:", e);
+      setSending(false);
+    }
+  };
+
+  return <div style={{ position:"absolute",inset:0,zIndex:50,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 0.6s ease" }}>
+    <button onClick={function() { onDone(null); }} style={{ position:"absolute",top:14,right:14,zIndex:25,background:"none",border:"none",color:"rgba(255,255,255,0.25)",fontSize:20,cursor:"pointer",padding:10 }}>{"\u2715"}</button>
+    <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(212,165,116,0.4)",marginBottom:30 }} />
+    <div style={{ color:"rgba(255,255,255,0.2)",fontSize:9,letterSpacing:"0.3em",fontWeight:200,marginBottom:10 }}>REUNION</div>
+    <div style={{ color:"rgba(255,255,255,0.35)",fontSize:12,fontWeight:200,letterSpacing:"0.12em",lineHeight:1.8,textAlign:"center",marginBottom:36 }}>
+      choose a day to see each other<br/>
+      <span style={{ color:"rgba(255,255,255,0.15)",fontSize:10 }}>your shared artwork will be revealed</span>
+    </div>
+    <input type="date" value={dateVal} min={today} onChange={function(ev) { setDateVal(ev.target.value); }}
+      style={{ fontSize:16,fontWeight:200,color:"rgba(255,255,255,0.5)",padding:"14px 24px",borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",outline:"none",fontFamily:FONT,colorScheme:"dark",marginBottom:24 }} />
+    <div onClick={dateVal && !sending ? submit : undefined}
+      style={{ padding:"14px 44px",borderRadius:24,border:"1px solid "+(dateVal?"rgba(212,165,116,0.2)":"rgba(255,255,255,0.06)"),background:dateVal?"rgba(212,165,116,0.06)":"transparent",cursor:dateVal?"pointer":"default",color:dateVal?"rgba(212,165,116,0.6)":"rgba(255,255,255,0.15)",fontSize:12,letterSpacing:"0.18em",fontWeight:200 }}>
+      {sending ? "SENDING\u2026" : "PROPOSE THIS DATE"}
+    </div>
+  </div>;
+}
+
+// ══════════════════════════════════════
+// REUNION — Incoming proposal (partner accepts/declines)
+// ══════════════════════════════════════
+function ReunionIncoming({ reunion, onRespond }) {
+  var dateStr = new Date(reunion.proposed_date + "T00:00:00").toLocaleDateString(undefined, { weekday:"long", day:"numeric", month:"long" });
+  return <div style={{ position:"absolute",inset:0,zIndex:50,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 0.8s ease" }}>
+    <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(212,165,116,0.4)",marginBottom:30 }} />
+    <div style={{ color:"rgba(255,255,255,0.2)",fontSize:9,letterSpacing:"0.3em",fontWeight:200,marginBottom:10 }}>REUNION</div>
+    <div style={{ color:"rgba(255,255,255,0.35)",fontSize:12,fontWeight:200,letterSpacing:"0.12em",lineHeight:1.8,textAlign:"center",marginBottom:12 }}>
+      your person wants to see you
+    </div>
+    <div style={{ color:"rgba(212,165,116,0.6)",fontSize:18,fontWeight:200,letterSpacing:"0.15em",marginBottom:10 }}>{dateStr}</div>
+    <div style={{ color:"rgba(255,255,255,0.15)",fontSize:10,fontWeight:200,marginBottom:40 }}>your shared artwork will be revealed</div>
+    <div style={{ display:"flex",gap:16 }}>
+      <div onClick={function() { onRespond(false); }} style={{ padding:"14px 32px",borderRadius:24,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.25)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>NOT YET</div>
+      <div onClick={function() { onRespond(true); }} style={{ padding:"14px 32px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.06)",cursor:"pointer",color:"rgba(212,165,116,0.6)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>ACCEPT</div>
+    </div>
+  </div>;
+}
+
+// ══════════════════════════════════════
+// REUNION — Full artwork reveal
+// ══════════════════════════════════════
+function ReunionReveal({ contribs, reunion, onDone }) {
+  var cvRef = useRef(null);
+  var _a = useState(0), al = _a[0], setAl = _a[1];
+
+  useEffect(function() {
+    var c = cvRef.current; if (!c) return;
+    var ctx = c.getContext("2d"), dpr = window.devicePixelRatio || 1, rect = c.getBoundingClientRect();
+    c.width = rect.width * dpr; c.height = rect.height * dpr; ctx.scale(dpr, dpr);
+    var w = rect.width, h = rect.height, start = Date.now(), dur = 20000, af;
+
+    function draw() {
+      var pr = Math.min(1, (Date.now() - start) / dur);
+      var fi = Math.min(1, pr * 1.5); // slow fade in
+      var fo = pr > 0.8 ? 1 - (pr - 0.8) / 0.2 : 1; // fade out at end
+      var a = fi * fo;
+      setAl(a);
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = "rgba(6,6,12," + (0.97 * a) + ")";
+      ctx.fillRect(0, 0, w, h);
+
+      // Reveal radius grows over time
+      var maxR = Math.min(w, h) * 0.45;
+      var vr = maxR * Math.min(1, pr * 2); // full size at 50%
+      var cx = w / 2, cy = h / 2;
+
+      if (vr > 2) {
+        ctx.save();
+        ctx.beginPath(); ctx.arc(cx, cy, vr, 0, Math.PI * 2); ctx.clip();
+        contribs.forEach(function(ct) {
+          if (!ct.path || ct.path.length < 2) return;
+          drawGesturePath(ctx, ct.path, ct.tone, w, h, a * 0.8, 10);
+        });
+        ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+        ctx.restore();
+
+        // Soft edge vignette
+        var eg = ctx.createRadialGradient(cx, cy, vr * 0.7, cx, cy, vr * 1.05);
+        eg.addColorStop(0, "transparent");
+        eg.addColorStop(1, "rgba(6,6,12," + a + ")");
+        ctx.fillStyle = eg; ctx.fillRect(0, 0, w, h);
+      }
+
+      if (pr < 1) af = requestAnimationFrame(draw);
+      else setTimeout(onDone, 500);
+    }
+    af = requestAnimationFrame(draw);
+    return function() { cancelAnimationFrame(af); };
+  }, [contribs, onDone]);
+
+  var dateStr = reunion && reunion.proposed_date
+    ? new Date(reunion.proposed_date + "T00:00:00").toLocaleDateString(undefined, { day:"numeric", month:"long", year:"numeric" })
+    : "";
+
+  return <div style={{ position:"absolute",inset:0,zIndex:55 }}>
+    <canvas ref={cvRef} style={{ position:"absolute",inset:0,width:"100%",height:"100%" }} />
+    <div style={{ position:"absolute",top:"8%",left:0,right:0,textAlign:"center",zIndex:1,pointerEvents:"none",fontFamily:FONT }}>
+      <div style={{ color:"rgba(212,165,116,"+(al*0.3)+")",fontSize:9,letterSpacing:"0.3em",fontWeight:200,marginBottom:6 }}>REUNION</div>
+      <div style={{ color:"rgba(255,255,255,"+(al*0.2)+")",fontSize:10,fontWeight:200 }}>{dateStr}</div>
+    </div>
+    <div style={{ position:"absolute",bottom:"8%",left:0,right:0,textAlign:"center",zIndex:1,pointerEvents:"none",fontFamily:FONT }}>
+      <div style={{ color:"rgba(255,255,255,"+(al*0.15)+")",fontSize:10,letterSpacing:"0.1em",fontWeight:200 }}>everything you built together</div>
+    </div>
+  </div>;
+}
+
+// ══════════════════════════════════════
+// RESET — Incoming proposal from partner
+// ══════════════════════════════════════
+function ResetIncoming({ onRespond }) {
+  return <div style={{ position:"absolute",inset:0,zIndex:50,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 0.8s ease" }}>
+    <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(255,255,255,0.3)",marginBottom:30 }} />
+    <div style={{ color:"rgba(255,255,255,0.2)",fontSize:9,letterSpacing:"0.3em",fontWeight:200,marginBottom:10 }}>START FRESH</div>
+    <div style={{ color:"rgba(255,255,255,0.35)",fontSize:12,fontWeight:200,letterSpacing:"0.12em",lineHeight:1.8,textAlign:"center",marginBottom:12 }}>
+      your person wants to start over
+    </div>
+    <div style={{ color:"rgba(255,255,255,0.15)",fontSize:10,fontWeight:200,marginBottom:40,textAlign:"center" }}>all traces and artwork will be cleared<br/>you can build something new together</div>
+    <div style={{ display:"flex",gap:16 }}>
+      <div onClick={function() { onRespond(false); }} style={{ padding:"14px 32px",borderRadius:24,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.25)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>KEEP</div>
+      <div onClick={function() { onRespond(true); }} style={{ padding:"14px 32px",borderRadius:24,border:"1px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.04)",cursor:"pointer",color:"rgba(255,255,255,0.45)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>START FRESH</div>
+    </div>
+  </div>;
+}
+
+// ══════════════════════════════════════
+// POST-REVEAL — After reunion artwork reveal, offer to start fresh
+// ══════════════════════════════════════
+function PostRevealPrompt({ onStartFresh, onKeep }) {
+  return <div style={{ position:"absolute",inset:0,zIndex:55,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 1s ease" }}>
+    <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(212,165,116,0.4)",marginBottom:30 }} />
+    <div style={{ color:"rgba(255,255,255,0.3)",fontSize:12,fontWeight:200,letterSpacing:"0.15em",lineHeight:1.8,textAlign:"center",marginBottom:40 }}>
+      you saw what you built together
+    </div>
+    <div style={{ color:"rgba(255,255,255,0.15)",fontSize:10,fontWeight:200,marginBottom:40,textAlign:"center" }}>would you like to start a new chapter?</div>
+    <div style={{ display:"flex",flexDirection:"column",gap:16,alignItems:"center" }}>
+      <div onClick={onStartFresh} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(212,165,116,0.15)",background:"rgba(212,165,116,0.04)",cursor:"pointer",color:"rgba(212,165,116,0.5)",fontSize:12,letterSpacing:"0.18em",fontWeight:200 }}>START FRESH</div>
+      <div onClick={onKeep} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.2)",fontSize:11,letterSpacing:"0.15em",fontWeight:200 }}>keep everything</div>
+    </div>
+    <div style={{ position:"absolute",bottom:30,color:"rgba(255,255,255,0.08)",fontSize:9,fontWeight:200,textAlign:"center" }}>your person will need to agree too</div>
   </div>;
 }

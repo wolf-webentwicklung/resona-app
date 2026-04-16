@@ -14,11 +14,11 @@ export var TONE_KEYS = Object.keys(TONES);
 export var SIGNALS = ["shimmer","pulse","drift","flicker","density","wave"];
 export var WHISPER_WORDS = ["here", "closer", "stay", "again", "you"];
 export var ECHO_MARKS = [
-  { g: "\u25CC", n: "openness" },
-  { g: "\u223F", n: "connection" },
-  { g: "\u00B7 \u00B7", n: "closeness" },
-  { g: "\u21BB", n: "return" },
-  { g: "\u2727", n: "special" },
+  { g: "\u2661", n: "tenderness" },
+  { g: "\u221E", n: "always" },
+  { g: "\u263E", n: "tonight" },
+  { g: "\u2740", n: "bloom" },
+  { g: "\u2727", n: "light" },
 ];
 export var GLIMPSE_TEXTS = [
   "a fragment of what you\u2019re building",
