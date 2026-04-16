@@ -75,6 +75,13 @@ export function soundNudge() {
   setTimeout(function() { note(420, 0.3, 0.04, 'sine'); }, 180);
 }
 
+// ── Shared canvas session start: two harmonizing tones ──
+export function soundSharedCanvas() {
+  note(262, 1.0, 0.07, 'sine');
+  note(392, 1.2, 0.05, 'sine');
+  setTimeout(function() { note(330, 0.8, 0.05, 'triangle'); }, 400);
+}
+
 // ── Tone preview sounds: short characteristic preview per tone ──
 export function soundTonePreview(toneName) {
   var c = getCtx(); if (!c) return;

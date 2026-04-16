@@ -173,6 +173,25 @@ Haptic feedback (vibration API) fires on proximity zones, hold, reveal, moments,
 
 ---
 
+## Depth Features
+
+### Gesture Feel
+Every gesture is analyzed when sent: speed, complexity, intensity, duration. This analysis is stored with the trace and modifies the partner's discovery experience. A slow, simple gesture creates a calm, meditative discovery. A fast, complex gesture creates urgency — particles accelerate, signals flicker, the space feels restless. The partner doesn't just see what you drew — they feel how you drew it.
+
+### Artwork Bleed
+The shared artwork gradually bleeds through into the idle space. At 5 traces, single fragments blink into visibility every few seconds. At 15+, multiple fragments drift permanently through the background. At 50+, a persistent ghostly imprint of the artwork lives in the noise. The space becomes a visual record of the relationship — day 1 looks empty, day 100 looks lived-in.
+
+### Shared Canvas
+When both partners are online simultaneously, a "draw together" option appears after 5 seconds. Tap to invite — if the partner joins, both enter a 30-second shared canvas. Both draw at the same time, seeing each other's strokes appear in real-time (via Supabase Broadcast). When the timer ends, both contributions are saved to the artwork. Available once every 24 hours. Uses each person's last tone color — no picker, just presence.
+
+### Idle Touch Ripples
+When it's not your turn, touching the space creates beautiful, ephemeral visual ripples. Soft glowing circles in your last tone color bloom where you touch, fade over 3 seconds. Nearby particles drift toward your finger. Nothing is sent, nothing saved — it's purely tactile. Gives the space a living quality and a reason to visit even while waiting.
+
+### Turn Reminder
+When your partner hasn't sent a trace for 3+ hours after it became their turn, "it's their turn · send a nudge" appears at the bottom. One tap sends a notification. Maximum one per waiting cycle, resets when a new trace arrives.
+
+---
+
 ## Technical Details
 
 ### Stack
@@ -250,6 +269,12 @@ resona/
 | Still-here cooldown | 4 hours |
 | Nudge delay | 2 hours after sending |
 | Nudge per trace | 1 |
+| Turn reminder delay | 3 hours |
+| Turn reminder per cycle | 1 |
+| Shared canvas cooldown | 24 hours |
+| Shared canvas duration | 30 seconds |
+| Idle ripple lifetime | 3 seconds |
+| Artwork bleed threshold | 5+ traces |
 | Invite code expiry | 24 hours |
 | Residue echo duration | 30 / 60 / 120 minutes |
 | Epoch thresholds | 10, 25, 50, 100 traces |

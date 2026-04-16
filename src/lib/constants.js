@@ -260,3 +260,75 @@ export function drawArtwork(ctx, contribs, w, h, alpha) {
     ctx.restore();
   });
 }
+
+// ── Gesture Feel Analysis ──
+// Analyzes HOW a gesture was drawn, not what it looks like
+export function analyzeGestureFeel(path) {
+  if (!path || path.length < 3) return { speed: 0.5, complexity: 0.3, intensity: 0.3, duration: 0 };
+  var dur = path[path.length - 1].t - path[0].t;
+  var totalDist = 0, dirChanges = 0;
+  for (var i = 1; i < path.length; i++) {
+    var dx = path[i].x - path[i-1].x, dy = path[i].y - path[i-1].y;
+    totalDist += Math.sqrt(dx * dx + dy * dy);
+    if (i > 1) {
+      var pdx = path[i-1].x - path[i-2].x, pdy = path[i-1].y - path[i-2].y;
+      if (Math.abs(pdx * dy - pdy * dx) > 0.0006) dirChanges++;
+    }
+  }
+  var avgSpeed = dur > 0 ? totalDist / (dur / 1000) : 0.5;
+  var speed = clamp(avgSpeed / 1.2, 0, 1); // normalize: ~1.2 units/s = fast
+  var complexity = clamp(dirChanges / 15, 0, 1); // normalize: 15+ changes = complex
+  var intensity = clamp(speed * 0.5 + complexity * 0.5, 0, 1);
+  return { speed: speed, complexity: complexity, intensity: intensity, duration: dur };
+}
+
+// ── Discovery Modifier from gesture feel ──
+export function getDiscoveryMod(gestureData) {
+  var feel = gestureData && gestureData.feel ? gestureData.feel : null;
+  if (!feel && gestureData && gestureData.path) {
+    feel = analyzeGestureFeel(gestureData.path); // fallback for old traces
+  }
+  if (!feel) return { noiseSpeed: 1, particleSpeed: 1, particleDamping: 0.9, signalAlpha: 1, glowRadius: 1 };
+
+  var s = feel.speed, c = feel.complexity;
+
+  if (s < 0.3 && c < 0.3) {
+    // Calm — slow, simple gesture
+    return { noiseSpeed: 0.5, particleSpeed: 0.5, particleDamping: 0.95, signalAlpha: 0.7, glowRadius: 0.9 };
+  } else if (s < 0.3 && c > 0.5) {
+    // Deep — slow, complex gesture
+    return { noiseSpeed: 0.7, particleSpeed: 0.7, particleDamping: 0.93, signalAlpha: 0.9, glowRadius: 1.3 };
+  } else if (s > 0.6 && c < 0.3) {
+    // Urgent — fast, simple gesture
+    return { noiseSpeed: 1.5, particleSpeed: 1.8, particleDamping: 0.85, signalAlpha: 1.2, glowRadius: 1.0 };
+  } else if (s > 0.6 && c > 0.5) {
+    // Intense — fast, complex gesture
+    return { noiseSpeed: 1.4, particleSpeed: 2.0, particleDamping: 0.83, signalAlpha: 1.3, glowRadius: 1.2 };
+  }
+  // Neutral
+  return { noiseSpeed: 1, particleSpeed: 1, particleDamping: 0.9, signalAlpha: 1, glowRadius: 1 };
+}
+
+// ── Artwork Bleed Config ──
+export var ARTWORK_BLEED_PHASES = [
+  { min: 5,  max: 14, count: 1, alpha: 0.02, cycleMs: 10000, fadeMs: 2000 },
+  { min: 15, max: 29, count: 3, alpha: 0.03, cycleMs: 0, fadeMs: 0 },
+  { min: 30, max: 49, count: 5, alpha: 0.035, cycleMs: 0, fadeMs: 0 },
+  { min: 50, max: 9999, count: 7, alpha: 0.04, cycleMs: 0, fadeMs: 0 },
+];
+
+export function getBleedPhase(traceCount) {
+  for (var i = 0; i < ARTWORK_BLEED_PHASES.length; i++) {
+    if (traceCount >= ARTWORK_BLEED_PHASES[i].min && traceCount <= ARTWORK_BLEED_PHASES[i].max) {
+      return ARTWORK_BLEED_PHASES[i];
+    }
+  }
+  return null;
+}
+
+// ── Turn Reminder ──
+export var TURN_REMINDER_DELAY_HOURS = 3;
+
+// ── Idle Touch Ripple Config ──
+export var RIPPLE_MAX_AGE_MS = 3000;
+export var RIPPLE_MAX_POINTS = 60;

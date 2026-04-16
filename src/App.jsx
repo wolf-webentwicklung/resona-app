@@ -8,17 +8,18 @@ import {
   getUnseenEvents, markEventSeen,
   getActiveProposal, proposeReunion, proposeReset, proposeReveal, respondToProposal, completeProposal, executeResetArtwork, subscribeToProposals,
   sendStillHere, getLastStillHere, sendNudge, getLastNudge, getLastSentTrace,
+  getLastPairTrace, createCanvasChannel, sendCanvasBroadcast, saveSharedCanvas,
   supabase
 } from './lib/supabase.js';
 import { detectMoment, persistMoment } from './lib/moments.js';
 import { hapticTap, hapticLight, hapticMedium, hapticReveal, hapticMoment, hapticSend, hapticProximity } from './lib/haptics.js';
-import { initAudio, soundFound, soundReveal, soundMoment, soundSend, soundIncoming, soundArtworkReveal, soundStillHere, soundNudge, soundTonePreview } from './lib/audio.js';
+import { initAudio, soundFound, soundReveal, soundMoment, soundSend, soundIncoming, soundArtworkReveal, soundStillHere, soundNudge, soundTonePreview, soundSharedCanvas } from './lib/audio.js';
 import {
   TONES, TONE_KEYS, WHISPER_POOL, ECHO_POOL, GLIMPSE_TEXTS, FONT,
   lerp, dst, clamp, pick, pickN, hex2, makeNoise, analyzeGesture, drawGesturePath, drawArtwork,
-  STILL_HERE_COOLDOWN_HOURS, NUDGE_DELAY_HOURS,
+  STILL_HERE_COOLDOWN_HOURS, NUDGE_DELAY_HOURS, TURN_REMINDER_DELAY_HOURS,
   EPOCH_THRESHOLDS, MILESTONES, TONE_DISCOVERY, RESIDUE_CONFIG, MAX_ECHOES,
-  getEpochShift
+  getEpochShift, getDiscoveryMod, getBleedPhase, RIPPLE_MAX_AGE_MS, RIPPLE_MAX_POINTS
 } from './lib/constants.js';
 
 // ══════════════════════════════════════
@@ -576,6 +577,28 @@ function ResonanceSpace({ user, pair, onDissolve }) {
   // ── Milestone state ──
   var _mile = useState(null), milestone = _mile[0], setMilestone = _mile[1];
 
+  // ── Turn reminder state ──
+  var _turnWait = useState(false), turnWaiting = _turnWait[0], setTurnWaiting = _turnWait[1];
+  var _turnSince = useState(null), turnSince = _turnSince[0], setTurnSince = _turnSince[1];
+  var _turnNudgeReady = useState(false), turnNudgeReady = _turnNudgeReady[0], setTurnNudgeReady = _turnNudgeReady[1];
+  var _turnNudgeSent = useState(false), turnNudgeSent = _turnNudgeSent[0], setTurnNudgeSent = _turnNudgeSent[1];
+  var _turnNudgeConfirm = useState(false), turnNudgeConfirm = _turnNudgeConfirm[0], setTurnNudgeConfirm = _turnNudgeConfirm[1];
+
+  // ── Idle touch ripples ──
+  var idleTouchesR = useRef([]);
+
+  // ── Artwork bleed cache ──
+  var bleedCacheR = useRef(null);
+  var bleedCacheTimeR = useRef(0);
+
+  // ── Shared Canvas state ──
+  var _drawTogether = useState(false), drawTogetherVisible = _drawTogether[0], setDrawTogetherVisible = _drawTogether[1];
+  var _sharedPhase = useState(null), sharedPhase = _sharedPhase[0], setSharedPhase = _sharedPhase[1]; // null|inviting|invited|drawing|saving
+  var _sharedTimer = useState(30), sharedTimer = _sharedTimer[0], setSharedTimer = _sharedTimer[1];
+  var _partnerStrokes = useState([]), partnerStrokes = _partnerStrokes[0], setPartnerStrokes = _partnerStrokes[1];
+  var myStrokesR = useRef([]);
+  var canvasChannelR = useRef(null);
+
   var cvRef = useRef(null);
   var nf1 = useRef(makeNoise()), nf2 = useRef(makeNoise()), nf3 = useRef(makeNoise());
   var timeR = useRef(0), afR = useRef(null);
@@ -689,6 +712,24 @@ function ResonanceSpace({ user, pair, onDissolve }) {
               var lastNdg = await getLastNudge(pair.id);
               if (!lastNdg || new Date(lastNdg.triggered_at).getTime() < new Date(lastSent.created_at).getTime()) {
                 setNudgeReady(true);
+              }
+            }
+          }
+        } catch (e) { /* ignore */ }
+
+        // Check turn-reminder eligibility (partner's turn to send)
+        try {
+          if (!canSend && !sentTone && contribs.length > 0) {
+            var lastPairTr = await getLastPairTrace(pair.id);
+            if (lastPairTr && lastPairTr.sender_id === user.id && lastPairTr.discovered_at) {
+              setTurnWaiting(true);
+              setTurnSince(new Date(lastPairTr.discovered_at).getTime());
+              var turnHoursAgo = (Date.now() - new Date(lastPairTr.discovered_at).getTime()) / 3600000;
+              if (turnHoursAgo >= TURN_REMINDER_DELAY_HOURS) {
+                var lastTurnNdg = await getLastNudge(pair.id);
+                if (!lastTurnNdg || new Date(lastTurnNdg.triggered_at).getTime() < new Date(lastPairTr.discovered_at).getTime()) {
+                  setTurnNudgeReady(true);
+                }
               }
             }
           }
@@ -985,15 +1026,95 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
       // NOTE: Artwork underlay REMOVED — artwork only visible during Glimpse
 
+      // ── Artwork bleed-through (Hebel 2) ──
+      if (ph === "idle" && cb.length >= 5) {
+        var bPhase = getBleedPhase(cb.length);
+        if (bPhase) {
+          var now = Date.now();
+          // Rebuild cache every 5s or when stale
+          if (!bleedCacheR.current || now - bleedCacheTimeR.current > 5000) {
+            try {
+              var oc = document.createElement("canvas"); oc.width = w; oc.height = h;
+              var octx = oc.getContext("2d");
+              var subset = [];
+              for (var bi = 0; bi < cb.length; bi++) {
+                if (bi % Math.max(1, Math.floor(cb.length / bPhase.count)) === 0 && subset.length < bPhase.count) {
+                  subset.push(cb[bi]);
+                }
+              }
+              subset.forEach(function(ct) {
+                if (!ct.path || ct.path.length < 2) return;
+                drawGesturePath(octx, ct.path, ct.tone, w, h, 0.5, 6);
+              });
+              bleedCacheR.current = oc;
+              bleedCacheTimeR.current = now;
+            } catch(e) { /* OffscreenCanvas fallback if error */ }
+          }
+          if (bleedCacheR.current) {
+            var bAlpha = bPhase.alpha;
+            // Blinking phase: fade in/out
+            if (bPhase.cycleMs > 0) {
+              var bCycle = (now % bPhase.cycleMs) / bPhase.cycleMs;
+              var bFade = bCycle < 0.1 ? bCycle / 0.1 : bCycle < 0.3 ? 1 : bCycle < 0.4 ? 1 - (bCycle - 0.3) / 0.1 : 0;
+              bAlpha *= bFade;
+            } else {
+              // Continuous: subtle pulse
+              bAlpha += Math.sin(t * 0.15) * 0.005;
+            }
+            if (bAlpha > 0.003) {
+              var bDriftX = Math.sin(t * 0.02) * 3;
+              var bDriftY = Math.cos(t * 0.017) * 2;
+              ctx.globalAlpha = bAlpha; ctx.globalCompositeOperation = "screen";
+              ctx.drawImage(bleedCacheR.current, bDriftX, bDriftY);
+              ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+            }
+          }
+        }
+      }
+
+      // ── Idle touch ripples (Hebel 5) ──
+      if (ph === "idle") {
+        var nowRipple = Date.now();
+        var ripples = idleTouchesR.current;
+        if (ripples.length > 0) {
+          // Remove expired
+          idleTouchesR.current = ripples = ripples.filter(function(rp) { return nowRipple - rp.t < RIPPLE_MAX_AGE_MS; });
+          var rippleRgb = rt.length > 0 && TONES[rt[0]] ? TONES[rt[0]].rgb : [200, 200, 220];
+          ctx.globalCompositeOperation = "screen";
+          ripples.forEach(function(rp) {
+            var age = (nowRipple - rp.t) / RIPPLE_MAX_AGE_MS;
+            var rAlpha = (1 - age) * 0.12;
+            var rRadius = 12 + age * 45;
+            ctx.globalAlpha = rAlpha;
+            var rGrd = ctx.createRadialGradient(rp.x * w, rp.y * h, 0, rp.x * w, rp.y * h, rRadius);
+            rGrd.addColorStop(0, "rgba(" + rippleRgb[0] + "," + rippleRgb[1] + "," + rippleRgb[2] + ",0.5)");
+            rGrd.addColorStop(1, "transparent");
+            ctx.fillStyle = rGrd; ctx.beginPath(); ctx.arc(rp.x * w, rp.y * h, rRadius, 0, Math.PI * 2); ctx.fill();
+          });
+          // Attract nearby particles
+          ripples.forEach(function(rp) {
+            if (nowRipple - rp.t > 1500) return;
+            pts.forEach(function(p2) {
+              var pd = dst(p2.x, p2.y, rp.x, rp.y);
+              if (pd < 0.15) { var inf = (1 - pd / 0.15) * 0.0005; p2.vx += (rp.x - p2.x) * inf; p2.vy += (rp.y - p2.y) * inf; }
+            });
+          });
+          ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+        }
+      }
+
       // Discovery rendering
       if (ph === "discovery" && tr) {
         var tone = tr.emotional_tone;
+        // ── Gesture Feel (Hebel 1) ──
+        var dMod = getDiscoveryMod(tr.gesture_data);
+        var dTime = t * dMod.noiseSpeed; // modified time for discovery elements
         // Playfulness drift: reveal position slowly moves in a circle
         var baseX = tr.reveal_position.x, baseY = tr.reveal_position.y;
         var driftSpd = tr.reveal_position.drift_speed || 0;
         if (driftSpd > 0) {
-          baseX += Math.sin(t * driftSpd) * 0.04;
-          baseY += Math.cos(t * driftSpd * 0.7) * 0.03;
+          baseX += Math.sin(dTime * driftSpd) * 0.04;
+          baseY += Math.cos(dTime * driftSpd * 0.7) * 0.03;
           baseX = clamp(baseX, 0.08, 0.92);
           baseY = clamp(baseY, 0.08, 0.85);
         }
@@ -1002,14 +1123,14 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         effectiveRevealPosR.current = { x: baseX, y: baseY };
         var td = TONES[tone];
         var cr3 = td ? td.rgb[0] : 180, cg3 = td ? td.rgb[1] : 180, cb3 = td ? td.rgb[2] : 220;
-        var sig = tr.signal_type, sp = 0.5 + Math.sin(t*2) * 0.3;
+        var sig = tr.signal_type, sp = (0.5 + Math.sin(dTime*2) * 0.3) * dMod.signalAlpha;
 
         // Signal rendering
-        if (sig === "shimmer") { for (var si = 0; si < 20; si++) { var sx = n1(si*7.3+t*0.3,t*0.2+si)*0.5+0.5, sy = n1(si*5.1+t*0.25,t*0.15+si+50)*0.5+0.5; ctx.fillStyle = "rgba("+cr3+","+cg3+","+cb3+","+(sp*(0.04+Math.sin(t*3+si*1.3)*0.03))+")"; ctx.beginPath(); ctx.arc(sx*w,sy*h,2.5,0,Math.PI*2); ctx.fill(); } }
-        else if (sig === "pulse") { for (var ri = 0; ri < 3; ri++) { var pr2 = 20+Math.abs(Math.sin(t*0.9+ri*1.3))*Math.min(w,h)*0.25; ctx.strokeStyle = "rgba("+cr3+","+cg3+","+cb3+","+(0.04*(1-pr2/(Math.min(w,h)*0.25)))+")"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(w/2,h/2,pr2,0,Math.PI*2); ctx.stroke(); } }
-        else if (sig === "drift") { var dx2 = Math.sin(t*0.2)*w*0.3+w/2, dy2 = Math.cos(t*0.28)*h*0.3+h/2; var g3 = ctx.createRadialGradient(dx2,dy2,0,dx2,dy2,60); g3.addColorStop(0,"rgba("+cr3+","+cg3+","+cb3+","+(sp*0.05)+")"); g3.addColorStop(1,"transparent"); ctx.fillStyle = g3; ctx.beginPath(); ctx.arc(dx2,dy2,60,0,Math.PI*2); ctx.fill(); }
+        if (sig === "shimmer") { for (var si = 0; si < 20; si++) { var sx = n1(si*7.3+dTime*0.3,dTime*0.2+si)*0.5+0.5, sy = n1(si*5.1+dTime*0.25,dTime*0.15+si+50)*0.5+0.5; ctx.fillStyle = "rgba("+cr3+","+cg3+","+cb3+","+(sp*(0.04+Math.sin(dTime*3+si*1.3)*0.03))+")"; ctx.beginPath(); ctx.arc(sx*w,sy*h,2.5,0,Math.PI*2); ctx.fill(); } }
+        else if (sig === "pulse") { for (var ri = 0; ri < 3; ri++) { var pr2 = 20+Math.abs(Math.sin(dTime*0.9+ri*1.3))*Math.min(w,h)*0.25; ctx.strokeStyle = "rgba("+cr3+","+cg3+","+cb3+","+(0.04*(1-pr2/(Math.min(w,h)*0.25)))+")"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(w/2,h/2,pr2,0,Math.PI*2); ctx.stroke(); } }
+        else if (sig === "drift") { var dx2 = Math.sin(dTime*0.2)*w*0.3+w/2, dy2 = Math.cos(dTime*0.28)*h*0.3+h/2; var g3 = ctx.createRadialGradient(dx2,dy2,0,dx2,dy2,60); g3.addColorStop(0,"rgba("+cr3+","+cg3+","+cb3+","+(sp*0.05)+")"); g3.addColorStop(1,"transparent"); ctx.fillStyle = g3; ctx.beginPath(); ctx.arc(dx2,dy2,60,0,Math.PI*2); ctx.fill(); }
         else if (sig === "flicker") { for (var fi = 0; fi < 6; fi++) { if (Math.random() > 0.4) { ctx.fillStyle = "rgba("+cr3+","+cg3+","+cb3+","+(0.03+Math.random()*0.05)+")"; ctx.beginPath(); ctx.arc(Math.random()*w,Math.random()*h,1.5+Math.random()*2,0,Math.PI*2); ctx.fill(); } } }
-        else if (sig === "density") { var nx = n1(t*0.15,0)*0.3+0.35, ny = n1(0,t*0.12)*0.3+0.35; for (var ddx = -55; ddx < 55; ddx += 8) { for (var ddy = -55; ddy < 55; ddy += 8) { var dd = dst(0,0,ddx,ddy); if (dd < 55) { var nv2 = n1((nx*w+ddx)*0.012+t,(ny*h+ddy)*0.012); ctx.fillStyle = "rgba("+cr3+","+cg3+","+cb3+","+(0.05*(1-dd/55)*(nv2+1)/2)+")"; ctx.fillRect(nx*w+ddx,ny*h+ddy,6,6); } } } }
+        else if (sig === "density") { var nx = n1(dTime*0.15,0)*0.3+0.35, ny = n1(0,dTime*0.12)*0.3+0.35; for (var ddx = -55; ddx < 55; ddx += 8) { for (var ddy = -55; ddy < 55; ddy += 8) { var dd = dst(0,0,ddx,ddy); if (dd < 55) { var nv2 = n1((nx*w+ddx)*0.012+dTime,(ny*h+ddy)*0.012); ctx.fillStyle = "rgba("+cr3+","+cg3+","+cb3+","+(0.05*(1-dd/55)*(nv2+1)/2)+")"; ctx.fillRect(nx*w+ddx,ny*h+ddy,6,6); } } } }
         else { for (var wi = 0; wi < w; wi += 5) { var wy = h/2+Math.sin(wi*0.01+t*1.1)*25; ctx.fillStyle = "rgba("+cr3+","+cg3+","+cb3+",0.025)"; ctx.fillRect(wi,wy,4,2); } }
 
         // Proximity zones
@@ -1072,20 +1193,21 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   var lastProxZone = useRef(-1);
   var onDown = useCallback(function(ev) {
-    if (phase !== "discovery" || !trace) return;
     var r = ev.currentTarget.getBoundingClientRect(), x = (ev.clientX-r.left)/r.width, y = (ev.clientY-r.top)/r.height;
+    if (phase === "idle" && y < 0.7) { idleTouchesR.current.push({ x:x, y:y, t:Date.now() }); if (idleTouchesR.current.length > RIPPLE_MAX_POINTS) idleTouchesR.current.shift(); }
+    if (phase !== "discovery" || !trace) return;
     setTouch({ x, y }); tcR.current = { x, y }; hapticTap();
     var ep = effectiveRevealPosR.current || trace.reveal_position;
     if (dst(x, y, ep.x, ep.y) / Math.sqrt(2) < (trace.search_radius || 0.08)) startHold();
   }, [phase, trace, startHold]);
 
   var onMove = useCallback(function(ev) {
-    if (phase !== "discovery" || !trace) return;
     var r = ev.currentTarget.getBoundingClientRect(), x = (ev.clientX-r.left)/r.width, y = (ev.clientY-r.top)/r.height;
+    if (phase === "idle" && y < 0.7) { idleTouchesR.current.push({ x:x, y:y, t:Date.now() }); if (idleTouchesR.current.length > RIPPLE_MAX_POINTS) idleTouchesR.current.shift(); }
+    if (phase !== "discovery" || !trace) return;
     setTouch({ x, y }); tcR.current = { x, y };
     var ep = effectiveRevealPosR.current || trace.reveal_position;
     var d = dst(x, y, ep.x, ep.y) / Math.sqrt(2);
-    // Proximity feedback — trigger on zone changes, not every frame
     var zone = d < 0.10 ? 4 : d < 0.18 ? 3 : d < 0.35 ? 2 : d < 0.55 ? 1 : 0;
     if (zone > 0 && zone !== lastProxZone.current) { hapticProximity(zone / 4); }
     lastProxZone.current = zone;
@@ -1251,6 +1373,86 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       await sendNudge(pair.id, user.id);
     } catch (e) { console.error("Nudge error:", e); }
   }, [pair, user]);
+
+  // ── Turn-reminder timer ──
+  useEffect(function() {
+    if (!turnWaiting || !turnSince || turnNudgeSent || turnNudgeReady) return;
+    var remaining = (turnSince + TURN_REMINDER_DELAY_HOURS * 3600000) - Date.now();
+    if (remaining <= 0) { setTurnNudgeReady(true); return; }
+    var t = setTimeout(function() { setTurnNudgeReady(true); }, remaining);
+    return function() { clearTimeout(t); };
+  }, [turnWaiting, turnSince, turnNudgeSent, turnNudgeReady]);
+
+  // ── Send turn reminder ──
+  var doSendTurnNudge = useCallback(async function() {
+    setTurnNudgeConfirm(false); setTurnNudgeSent(true); setTurnNudgeReady(false);
+    soundNudge(); hapticLight();
+    try {
+      await sendNudge(pair.id, user.id);
+    } catch (e) { console.error("Turn nudge error:", e); }
+  }, [pair, user]);
+
+  // ── Shared Canvas: visibility check ──
+  useEffect(function() {
+    if (!partnerHere || phase !== "idle" || sharedPhase) { setDrawTogetherVisible(false); return; }
+    var lastSession = 0;
+    try { lastSession = parseInt(localStorage.getItem("last_shared_canvas") || "0"); } catch(e) {}
+    if (Date.now() - lastSession < 24 * 3600000) { setDrawTogetherVisible(false); return; }
+    var timer = setTimeout(function() { setDrawTogetherVisible(true); }, 5000);
+    return function() { clearTimeout(timer); setDrawTogetherVisible(false); };
+  }, [partnerHere, phase, sharedPhase]);
+
+  // ── Shared Canvas: broadcast channel ──
+  useEffect(function() {
+    if (!pair) return;
+    var ch = createCanvasChannel(pair.id,
+      function(data) { if (data.userId !== user.id) setPartnerStrokes(function(prev) { return prev.concat(data.points || []); }); },
+      function(data) { if (data.userId !== user.id) setSharedPhase("invited"); },
+      function(data) { if (data.userId !== user.id && sharedPhase === "inviting") { setSharedPhase("drawing"); soundSharedCanvas(); hapticMoment(); setSharedTimer(30); } },
+      function(data) { if (sharedPhase === "inviting") setSharedPhase(null); }
+    );
+    canvasChannelR.current = ch;
+    return function() { supabase.removeChannel(ch); canvasChannelR.current = null; };
+  }, [pair, user, sharedPhase]);
+
+  // ── Shared Canvas: start drawing ──
+  var startSharedCanvas = useCallback(function() {
+    setSharedPhase("inviting");
+    sendCanvasBroadcast(canvasChannelR.current, "canvas_invite", { userId: user.id });
+  }, [user]);
+
+  var joinSharedCanvas = useCallback(function() {
+    setSharedPhase("drawing"); soundSharedCanvas(); hapticMoment(); setSharedTimer(30);
+    sendCanvasBroadcast(canvasChannelR.current, "canvas_join", { userId: user.id });
+  }, [user]);
+
+  var declineSharedCanvas = useCallback(function() {
+    setSharedPhase(null);
+    sendCanvasBroadcast(canvasChannelR.current, "canvas_decline", { userId: user.id });
+  }, [user]);
+
+  // ── Shared Canvas: timer ──
+  useEffect(function() {
+    if (sharedPhase !== "drawing") return;
+    var iv = setInterval(function() {
+      setSharedTimer(function(t) {
+        if (t <= 1) {
+          clearInterval(iv);
+          // Save my strokes
+          var myStrokes = myStrokesR.current;
+          if (myStrokes.length > 3) {
+            saveSharedCanvas(pair.id, user.id, myStrokes, lastTone || "nearness").catch(function(){});
+            setContribs(function(prev) { return prev.concat([{ tone: lastTone || "nearness", path: myStrokes }]); });
+          }
+          try { localStorage.setItem("last_shared_canvas", String(Date.now())); } catch(e) {}
+          setSharedPhase(null); setPartnerStrokes([]); myStrokesR.current = [];
+          return 0;
+        }
+        return t - 1;
+      });
+    }, 1000);
+    return function() { clearInterval(iv); };
+  }, [sharedPhase, pair, user, lastTone]);
 
   // ── Still-here gesture handlers ──
   var startStillHereHold = useCallback(function() {
@@ -1532,6 +1734,39 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         </div>
       </div> : null}
 
+      {/* Turn-reminder confirmation */}
+      {turnNudgeConfirm ? <div style={{ position:"absolute",inset:0,zIndex:52,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none" }}>
+        <div style={{ pointerEvents:"auto",maxWidth:300,padding:"24px 28px",borderRadius:20,background:"rgba(17,17,24,0.95)",border:"1px solid rgba(255,255,255,0.08)",fontFamily:FONT,textAlign:"center",animation:"fadeIn 0.5s ease",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)" }}>
+          <div style={{ color:"rgba(255,255,255,0.45)",fontSize:12,letterSpacing:"0.2em",fontWeight:200,marginBottom:12 }}>GENTLE NUDGE</div>
+          <div style={{ color:"rgba(255,255,255,0.5)",fontSize:13,fontWeight:200,lineHeight:1.7,marginBottom:20 }}>let your person know<br/>it's their turn</div>
+          <div style={{ display:"flex",gap:12,justifyContent:"center" }}>
+            <div onClick={function() { setTurnNudgeConfirm(false); }} style={{ padding:"10px 20px",borderRadius:20,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200 }}>CANCEL</div>
+            <div onClick={doSendTurnNudge} style={{ padding:"10px 20px",borderRadius:20,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.06)",cursor:"pointer",color:"rgba(212,165,116,0.7)",fontSize:12,fontWeight:300 }}>SEND</div>
+          </div>
+        </div>
+      </div> : null}
+
+      {/* Shared Canvas: waiting for partner to join */}
+      {sharedPhase === "inviting" ? <div style={{ position:"absolute",inset:0,zIndex:46,background:"rgba(6,6,12,0.95)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 0.6s ease" }}>
+        <div style={{ width:6,height:6,borderRadius:"50%",background:"rgba(212,165,116,0.5)",animation:"gentlePulse 2s ease infinite",marginBottom:20 }} />
+        <div style={{ color:"rgba(255,255,255,0.5)",fontSize:13,letterSpacing:"0.2em",fontWeight:200,marginBottom:12 }}>waiting for your person{String.fromCharCode(8230)}</div>
+        <div onClick={function() { setSharedPhase(null); }} style={{ color:"rgba(255,255,255,0.3)",fontSize:12,fontWeight:200,cursor:"pointer",marginTop:16 }}>cancel</div>
+      </div> : null}
+
+      {/* Shared Canvas: partner invites you */}
+      {sharedPhase === "invited" ? <div style={{ position:"absolute",inset:0,zIndex:46,background:"rgba(6,6,12,0.95)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 0.8s ease" }}>
+        <div style={{ width:6,height:6,borderRadius:"50%",background:"rgba(212,165,116,0.6)",boxShadow:"0 0 24px rgba(212,165,116,0.3)",marginBottom:20 }} />
+        <div style={{ color:"rgba(255,255,255,0.55)",fontSize:14,letterSpacing:"0.15em",fontWeight:200,marginBottom:8 }}>your person wants to draw together</div>
+        <div style={{ color:"rgba(255,255,255,0.3)",fontSize:12,fontWeight:200,marginBottom:28 }}>30 seconds · both draw at once</div>
+        <div style={{ display:"flex",gap:16 }}>
+          <div onClick={declineSharedCanvas} style={{ padding:"12px 28px",borderRadius:24,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.45)",fontSize:13,fontWeight:200 }}>LATER</div>
+          <div onClick={joinSharedCanvas} style={{ padding:"12px 28px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.06)",cursor:"pointer",color:"rgba(212,165,116,0.7)",fontSize:13,fontWeight:300 }}>JOIN</div>
+        </div>
+      </div> : null}
+
+      {/* Shared Canvas: drawing phase */}
+      {sharedPhase === "drawing" ? <SharedCanvasUI myTone={lastTone || "nearness"} partnerTone={recTones.length > 0 ? recTones[0] : "warmth"} partnerStrokes={partnerStrokes} timer={sharedTimer} channelRef={canvasChannelR} userId={user.id} onStrokesUpdate={function(s) { myStrokesR.current = s; }} /> : null}
+
       {/* Proposal overlays */}
       {reunionUI === "propose" ? <ReunionPropose pair={pair} user={user} onDone={function(reu) { if (reu) setReunion(reu); setReunionUI(null); }} /> : null}
 
@@ -1606,8 +1841,22 @@ function ResonanceSpace({ user, pair, onDissolve }) {
               <span style={{ color:"rgba(212,165,116,0.4)",fontSize:13,letterSpacing:"0.12em",fontWeight:200 }}>reminder sent</span>
             </div> : null}
           </div>
-          : phase === "idle" && !canSend && contribs.length > 0 ? null
+          : phase === "idle" && !canSend && contribs.length > 0 ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",paddingBottom:20,gap:6 }}>
+            <span style={{ color:"rgba(255,255,255,0.25)",fontSize:12,letterSpacing:"0.14em",fontWeight:200 }}>waiting for your person</span>
+            {turnNudgeReady && !turnNudgeSent ? <div onClick={function() { setTurnNudgeConfirm(true); }} style={{ marginTop:8,cursor:"pointer",padding:"8px 20px",borderRadius:16,border:"1px solid rgba(255,255,255,0.06)",background:"rgba(255,255,255,0.02)",animation:"fadeIn 1s ease" }}>
+              <span style={{ color:"rgba(255,255,255,0.35)",fontSize:12,letterSpacing:"0.12em",fontWeight:200 }}>it's their turn · send a nudge</span>
+            </div> : null}
+            {turnNudgeSent ? <div style={{ marginTop:8,animation:"fadeIn 0.5s ease" }}>
+              <span style={{ color:"rgba(212,165,116,0.4)",fontSize:12,letterSpacing:"0.12em",fontWeight:200 }}>nudge sent</span>
+            </div> : null}
+          </div>
           : null}
+          {/* Draw together button */}
+          {drawTogetherVisible && phase === "idle" ? <div onClick={startSharedCanvas} style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:8,cursor:"pointer",padding:"10px 24px",marginBottom:8,animation:"fadeIn 1.5s ease" }}>
+            <div style={{ width:4,height:4,borderRadius:"50%",background:"rgba(212,165,116,0.4)" }} />
+            <span style={{ color:"rgba(212,165,116,0.4)",fontSize:12,letterSpacing:"0.15em",fontWeight:200 }}>draw together</span>
+            <div style={{ width:4,height:4,borderRadius:"50%",background:"rgba(212,165,116,0.4)" }} />
+          </div> : null}
           {/* Still-here hold area — idle with nothing to send */}
           {phase === "idle" && !canSend && !sentTone && stillHereReady && contribs.length > 0 ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",paddingBottom:20,gap:6,animation:"fadeIn 2s ease" }}>
             <div onPointerDown={startStillHereHold} onPointerUp={stopStillHereHold} onPointerLeave={stopStillHereHold}
@@ -1811,6 +2060,111 @@ function EchoMarkDisplayUI({ mark, rgb, onDone }) {
     <span style={{ fontSize:42,color:"rgba("+rgb+","+(al*0.35)+")",textShadow:"0 0 25px rgba("+rgb+","+(al*0.12)+")" }}>{mark.g}</span>
   </div>;
 }
+
+// ══════════════════════════════════════
+// SHARED CANVAS — synchronous drawing for two
+// ══════════════════════════════════════
+function SharedCanvasUI({ myTone, partnerTone, partnerStrokes, timer, channelRef, userId, onStrokesUpdate }) {
+  var cvRef = useRef(null);
+  var drawing = useRef(false);
+  var localPath = useRef([]);
+  var allPartner = useRef([]);
+
+  useEffect(function() { allPartner.current = partnerStrokes; }, [partnerStrokes]);
+
+  // Send strokes batch every 50ms
+  var sendBatchRef = useRef(null);
+  var pendingBatch = useRef([]);
+  useEffect(function() {
+    sendBatchRef.current = setInterval(function() {
+      if (pendingBatch.current.length > 0 && channelRef.current) {
+        sendCanvasBroadcast(channelRef.current, "stroke", { userId: userId, points: pendingBatch.current });
+        pendingBatch.current = [];
+      }
+    }, 50);
+    return function() { clearInterval(sendBatchRef.current); };
+  }, [userId, channelRef]);
+
+  var oD = useCallback(function(ev) {
+    var r = ev.currentTarget.getBoundingClientRect();
+    var pt = { x: (ev.clientX-r.left)/r.width, y: (ev.clientY-r.top)/r.height, t: Date.now() };
+    localPath.current.push(pt);
+    pendingBatch.current.push(pt);
+    onStrokesUpdate(localPath.current);
+    drawing.current = true;
+  }, [onStrokesUpdate]);
+
+  var oM = useCallback(function(ev) {
+    if (!drawing.current) return;
+    var r = ev.currentTarget.getBoundingClientRect();
+    var pt = { x: (ev.clientX-r.left)/r.width, y: (ev.clientY-r.top)/r.height, t: Date.now() };
+    localPath.current.push(pt);
+    pendingBatch.current.push(pt);
+  }, []);
+
+  var oU = useCallback(function() {
+    drawing.current = false;
+    onStrokesUpdate(localPath.current);
+    // Break between strokes
+    localPath.current.push(null);
+    pendingBatch.current.push(null);
+  }, [onStrokesUpdate]);
+
+  // Render loop
+  useEffect(function() {
+    var c = cvRef.current; if (!c) return;
+    var ctx = c.getContext("2d"), dpr = window.devicePixelRatio || 1;
+    var rect = c.getBoundingClientRect();
+    c.width = rect.width * dpr; c.height = rect.height * dpr; ctx.scale(dpr, dpr);
+    var w = rect.width, h = rect.height, af;
+    var myCol = TONES[myTone] || TONES.nearness;
+    var partCol = TONES[partnerTone] || TONES.warmth;
+
+    function drawPath(points, cols, alpha) {
+      if (!points || points.length < 1) return;
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.globalAlpha = alpha; ctx.globalCompositeOperation = "screen";
+      var segment = [];
+      for (var i = 0; i < points.length; i++) {
+        if (points[i] === null) { segment = []; continue; }
+        segment.push(points[i]);
+        if (segment.length > 1) {
+          var p0 = segment[segment.length-2], p1 = segment[segment.length-1];
+          ctx.beginPath(); ctx.moveTo(p0.x*w, p0.y*h); ctx.lineTo(p1.x*w, p1.y*h);
+          ctx.strokeStyle = cols.colors[1] + "44"; ctx.lineWidth = 12; ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(p0.x*w, p0.y*h); ctx.lineTo(p1.x*w, p1.y*h);
+          ctx.strokeStyle = cols.colors[0]; ctx.lineWidth = 3; ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+    }
+
+    function frame() {
+      ctx.fillStyle = "#0A0A12"; ctx.fillRect(0, 0, w, h);
+      drawPath(localPath.current, myCol, 0.7);
+      drawPath(allPartner.current, partCol, 0.6);
+      af = requestAnimationFrame(frame);
+    }
+    af = requestAnimationFrame(frame);
+    return function() { cancelAnimationFrame(af); };
+  }, [myTone, partnerTone]);
+
+  var timerColor = timer <= 5 ? "rgba(212,165,116,0.7)" : "rgba(255,255,255,0.4)";
+  var timerGlow = timer <= 5 ? "0 0 20px rgba(212,165,116,0.3)" : "none";
+
+  return <div style={{ position:"absolute",inset:0,zIndex:46,background:"#0A0A12",fontFamily:FONT }}>
+    <div style={{ position:"absolute",top:20,left:0,right:0,textAlign:"center",zIndex:1,pointerEvents:"none" }}>
+      <span style={{ color:timerColor,fontSize:20,fontWeight:200,letterSpacing:"0.15em",textShadow:timerGlow }}>0:{timer < 10 ? "0" + timer : timer}</span>
+    </div>
+    <div style={{ position:"absolute",top:50,left:0,right:0,textAlign:"center",zIndex:1,pointerEvents:"none" }}>
+      <span style={{ color:"rgba(255,255,255,0.2)",fontSize:12,letterSpacing:"0.2em",fontWeight:200 }}>drawing together</span>
+    </div>
+    <div style={{ position:"absolute",inset:0,touchAction:"none",cursor:"crosshair" }} onPointerDown={oD} onPointerMove={oM} onPointerUp={oU} onPointerLeave={oU}>
+      <canvas ref={cvRef} style={{ width:"100%",height:"100%" }} />
+    </div>
+  </div>;
+}
+
 
 function PulseCaptureUI({ tone, rgb, onCapture }) {
   var _t = useState(null), tm = _t[0], st = _t[1];
