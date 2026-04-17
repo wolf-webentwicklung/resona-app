@@ -8,10 +8,25 @@ export var TONES = {
   tension:     { name: "Tension",     colors: ["#C41E3A","#E03E5A","#FF6B7A"], primary: "#C41E3A", rgb: [196,30,58], ch: "sharp" },
   warmth:      { name: "Warmth",      colors: ["#E07A5F","#F2CC8F","#F4E4C1"], primary: "#E07A5F", rgb: [224,122,95], ch: "round" },
   playfulness: { name: "Playfulness", colors: ["#00B4D8","#48D1E8","#7EFCF6"], primary: "#00B4D8", rgb: [0,180,216], ch: "bounce" },
+  ruhe:        { name: "Ruhe",        colors: ["#8BA7B8","#A8C4D4","#C5DCE8"], primary: "#8BA7B8", rgb: [139,167,184], ch: "still" },
+  hingabe:     { name: "Hingabe",     colors: ["#B87A4A","#CC9460","#E0B080"], primary: "#B87A4A", rgb: [184,122,74], ch: "surrender" },
+  trauer:      { name: "Trauer",      colors: ["#3A506B","#506888","#6A80A0"], primary: "#3A506B", rgb: [58,80,107], ch: "heavy" },
+  staunen:     { name: "Staunen",     colors: ["#6B4A9B","#8B6ABB","#A888D0"], primary: "#6B4A9B", rgb: [107,74,155], ch: "vast" },
+  begehren:    { name: "Begehren",    colors: ["#9A2855","#BE3870","#D85888"], primary: "#9A2855", rgb: [154,40,85], ch: "pull" },
 };
 
 export var TONE_KEYS = Object.keys(TONES);
 export var SIGNALS = ["shimmer","pulse","drift","flicker","density","wave"];
+
+// ── Tone unlock thresholds (pair total trace count) ──
+export var TONE_UNLOCK_THRESHOLDS = {
+  nearness: 0, warmth: 0, playfulness: 0, longing: 0, tension: 0,
+  ruhe: 25, hingabe: 40, trauer: 55, staunen: 70, begehren: 85,
+};
+
+export function getAvailableTones(traceCount) {
+  return TONE_KEYS.filter(function(k) { return (TONE_UNLOCK_THRESHOLDS[k] || 0) <= traceCount; });
+}
 
 // Large pools — 5 random items are picked each time the picker opens
 export var WHISPER_POOL = [
@@ -143,10 +158,10 @@ export function drawGesturePath(ctx, path, tone, w, h, alpha, glowWidth) {
 // ── Epoch progression ──
 export var EPOCH_THRESHOLDS = [
   { traces: 0,   hueShift: 0,    satBoost: 0 },
-  { traces: 10,  hueShift: 0.02, satBoost: 0.01 },
-  { traces: 25,  hueShift: 0.05, satBoost: 0.02 },
-  { traces: 50,  hueShift: 0.09, satBoost: 0.03 },
-  { traces: 100, hueShift: 0.14, satBoost: 0.04 },
+  { traces: 10,  hueShift: 0.04, satBoost: 0.02 },
+  { traces: 25,  hueShift: 0.10, satBoost: 0.04 },
+  { traces: 50,  hueShift: 0.18, satBoost: 0.07 },
+  { traces: 100, hueShift: 0.28, satBoost: 0.10 },
 ];
 
 export var MILESTONES = [
@@ -164,6 +179,11 @@ export var TONE_DISCOVERY = {
   playfulness: { baseRadius: 0.12, preferSignal: "shimmer", driftSpeed: 0.15 },
   longing:     { baseRadius: 0.10, preferSignal: "pulse" },
   tension:     { baseRadius: 0.08, preferSignal: "flicker" },
+  ruhe:        { baseRadius: 0.14, preferSignal: "density" },
+  hingabe:     { baseRadius: 0.12, preferSignal: "shimmer" },
+  trauer:      { baseRadius: 0.10, preferSignal: "wave" },
+  staunen:     { baseRadius: 0.13, preferSignal: "shimmer" },
+  begehren:    { baseRadius: 0.09, preferSignal: "pulse" },
 };
 
 // ── Residue echo config ──

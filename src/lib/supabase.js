@@ -112,7 +112,13 @@ export async function sendTrace(pairId, senderId, receiverId, path, tone, isFirs
     .eq('pair_id', pairId)
     .eq('sender_id', senderId);
   var isFirst = (count != null && count === 0);
-  var dm = isFirst ? 'stillness' : ['stillness', 'wake', 'follow'][Math.floor(Math.random() * 3)];
+
+  var { count: pairCount } = await supabase
+    .from('traces')
+    .select('id', { count: 'exact', head: true })
+    .eq('pair_id', pairId);
+  var dm = (pairCount != null && pairCount < 10) ? 'stillness' :
+           ['stillness', 'wake', 'follow'][Math.floor(Math.random() * 3)];
 
   // Signal type: mode takes precedence, then tone preference, then random
   var modeSignals = { wake: 'pulse', follow: 'drift', stillness: tp.preferSignal };
@@ -462,4 +468,33 @@ export async function saveSharedCanvas(pairId, userId, strokes, tone) {
     tone: tone || 'nearness',
   });
   if (error) throw error;
+}
+
+// ── Streak: consecutive days with at least one sent trace ──
+export async function getStreakData(userId) {
+  const { data } = await supabase
+    .from('traces')
+    .select('created_at')
+    .eq('sender_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (!data || data.length === 0) return { current: 0, totalDays: 0 };
+
+  const uniqueDates = [...new Set(data.map(function(t) { return t.created_at.slice(0, 10); }))].sort().reverse();
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+
+  if (uniqueDates[0] !== today && uniqueDates[0] !== yesterday) {
+    return { current: 0, totalDays: uniqueDates.length };
+  }
+
+  let current = 0;
+  for (let i = 0; i < uniqueDates.length; i++) {
+    const d = new Date(Date.now() - i * 86400000);
+    const checkDate = d.toISOString().slice(0, 10);
+    if (uniqueDates[i] === checkDate) current++;
+    else break;
+  }
+  return { current, totalDays: uniqueDates.length };
 }

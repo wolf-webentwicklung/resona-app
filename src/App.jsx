@@ -9,6 +9,7 @@ import {
   getActiveProposal, proposeReunion, proposeReset, proposeReveal, respondToProposal, completeProposal, executeResetArtwork, subscribeToProposals,
   sendStillHere, getLastStillHere, sendNudge, getLastNudge, getLastSentTrace,
   getLastPairTrace, createCanvasChannel, sendCanvasBroadcast, saveSharedCanvas,
+  getStreakData,
   supabase
 } from './lib/supabase.js';
 import { detectMoment, persistMoment } from './lib/moments.js';
@@ -20,7 +21,8 @@ import {
   STILL_HERE_COOLDOWN_HOURS, NUDGE_DELAY_HOURS, TURN_REMINDER_DELAY_HOURS,
   EPOCH_THRESHOLDS, MILESTONES, TONE_DISCOVERY, RESIDUE_CONFIG, MAX_ECHOES,
   getEpochShift, getDiscoveryMod, getBleedPhase, RIPPLE_MAX_AGE_MS, RIPPLE_MAX_POINTS,
-  WAKE_BREATH_CYCLE_MS, WAKE_THRESHOLD, FOLLOW_DURATION_MS
+  WAKE_BREATH_CYCLE_MS, WAKE_THRESHOLD, FOLLOW_DURATION_MS,
+  TONE_UNLOCK_THRESHOLDS, getAvailableTones
 } from './lib/constants.js';
 
 // ══════════════════════════════════════
@@ -583,6 +585,12 @@ function ResonanceSpace({ user, pair, onDissolve }) {
   var _nudgeInc = useState(null), nudgeIncoming = _nudgeInc[0], setNudgeIncoming = _nudgeInc[1];
   var _sentAt = useState(null), sentAt = _sentAt[0], setSentAt = _sentAt[1];
 
+  // ── Streak state ──
+  var _str = useState({ current: 0, totalDays: 0 }), streakData = _str[0], setStreakData = _str[1];
+
+  // ── Tone awakening ──
+  var _twa = useState(null), tonesAwakening = _twa[0], setTonesAwakening = _twa[1];
+
   // ── Milestone state ──
   var _mile = useState(null), milestone = _mile[0], setMilestone = _mile[1];
 
@@ -646,11 +654,30 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     (async function() {
       try {
         var art = await getArtwork(pair.id);
+        var artContribs = [];
         if (art.length > 0) {
-          setContribs(art.filter(function(a) { return a.path_data && a.path_data.path; }).map(function(a) { return { tone: a.tone, path: a.path_data.path }; }));
+          artContribs = art.filter(function(a) { return a.path_data && a.path_data.path; }).map(function(a) { return { tone: a.tone, path: a.path_data.path }; });
+          setContribs(artContribs);
           setRecTones(art.slice(-5).map(function(a) { return a.tone; }).reverse());
           setOnbStep(4);
         }
+
+        // Check for newly awakened tones
+        try {
+          var totalTraces = art.length;
+          var prevTraceCount = parseInt(localStorage.getItem('resona_prev_trace_count') || '0');
+          var nowAvailable = getAvailableTones(totalTraces);
+          var prevAvailable = getAvailableTones(prevTraceCount);
+          var newlyAwakened = nowAvailable.filter(function(k) { return prevAvailable.indexOf(k) === -1; });
+          if (newlyAwakened.length > 0) setTonesAwakening(newlyAwakened);
+          localStorage.setItem('resona_prev_trace_count', String(totalTraces));
+        } catch(e) {}
+
+        // Load streak data
+        try {
+          var sd = await getStreakData(user.id);
+          setStreakData(sd);
+        } catch(e) {}
         var pending = await getPendingTrace(user.id);
         var localCanSend = false;
         if (pending) {
@@ -1586,8 +1613,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
   // ── Shared Canvas: automatic detection (both online + cooldown + no recent moment) ──
   useEffect(function() {
     if (!partnerHere || phase !== "idle" || sharedPhase) return;
-    // Need at least 6 traces before the feature unlocks
-    if (contribs.length < 6) return;
+    // Need at least 20 traces before the feature unlocks
+    if (contribs.length < 20) return;
     // 7-day cooldown (was 24h — want this to be rare)
     var lastSession = 0;
     try { lastSession = parseInt(localStorage.getItem("last_shared_canvas") || "0"); } catch(e) {}
@@ -1781,6 +1808,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
           <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16 }}>
             <div style={{ color:"rgba(255,255,255,0.58)",fontSize:14,letterSpacing:"0.08em",fontWeight:200 }}>
               Connected{dayCount > 1 ? " \u00B7 day " + dayCount : ""}
+              {streakData.current > 1 ? <span style={{ marginLeft:8,color:"rgba(212,165,116,0.6)",fontSize:12,fontWeight:200 }}>{"\u25CF"} {streakData.current}-day streak</span> : null}
             </div>
             {partnerHere ? <div style={{ display:"flex",alignItems:"center",gap:6 }}>
               <div style={{ width:5,height:5,borderRadius:"50%",background:"rgba(212,165,116,0.6)" }} />
@@ -1897,7 +1925,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         var qt = pendingTraceRef.current;
         if (qt) { pendingTraceRef.current = null; setTrace(qt); setPhase("discovery"); setCanSend(false); setSentTone(null); setTurnWaiting(false); setTurnNudgeReady(false); setTurnNudgeSent(false); soundIncoming(); hapticMedium(); }
         else { setPhase("idle"); }
-      }} guided={onbStep <= 3} /> : null}
+      }} guided={onbStep <= 3} traceCount={contribs.length} /> : null}
 
       {/* Moment intros */}
       {mPhase === "twin_connection_intro" ? <MomentIntro rgb={mRgb} label="SOMETHING RARE HAPPENED" onDone={onIntroTwinDone} /> : null}
@@ -2030,6 +2058,15 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {reunionUI === "post_reveal" ? <PostRevealPrompt onStartFresh={function() {
         proposeReset(pair.id, user.id).then(function() { setReunionUI(null); }).catch(function(e) { console.error(e); setReunionUI(null); });
       }} onKeep={function() { setReunion(null); setReunionUI(null); }} /> : null}
+
+      {/* Tone awakening overlay */}
+      {tonesAwakening && tonesAwakening.length > 0 ? <div onClick={function() { setTonesAwakening(null); }} style={{ position:"absolute",inset:0,zIndex:40,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT,animation:"fadeIn 1.5s ease",cursor:"pointer" }}>
+        <div style={{ display:"flex",gap:16,marginBottom:24 }}>
+          {tonesAwakening.map(function(k) { return <div key={k} style={{ width:44,height:44,borderRadius:"50%",background:"radial-gradient(circle at 36% 36%,"+TONES[k].colors[0]+","+TONES[k].colors[1]+")",boxShadow:"0 0 40px "+TONES[k].primary+"88",animation:"gentlePulse 2s ease infinite" }} />; })}
+        </div>
+        {tonesAwakening.map(function(k) { return <div key={k} style={{ color:TONES[k].primary,fontSize:13,letterSpacing:"0.2em",fontWeight:200,opacity:0.7,marginBottom:4 }}>{TONES[k].name}</div>; })}
+        <div style={{ marginTop:16,color:"rgba(255,255,255,0.35)",fontSize:12,letterSpacing:"0.12em",fontWeight:200 }}>tap to continue</div>
+      </div> : null}
 
       {/* Bottom affordance */}
       {phase === "idle" || phase === "discovery" ? (
@@ -2442,24 +2479,26 @@ function GlimpseCanvas({ contribs, onDone }) {
   return <canvas ref={ref} style={{ position:"absolute",inset:0,width:"100%",height:"100%",zIndex:35,pointerEvents:"none" }} />;
 }
 
-function TraceCreationUI({ onSend, onCancel, guided }) {
+function TraceCreationUI({ onSend, onCancel, guided, traceCount }) {
   var _a = useState(null), tone = _a[0], setTone = _a[1];
   var _b = useState([]), path = _b[0], setPath = _b[1];
   var _c = useState(false), dr = _c[0], setDr = _c[1];
   var _d = useState(false), sent = _d[0], setSent = _d[1];
   var _pv = useState(null), previewTone = _pv[0], setPreviewTone = _pv[1];
   var _pvA = useState(0), previewAlpha = _pvA[0], setPreviewAlpha = _pvA[1];
-  var cv = useRef(null), pr = useRef([]), sendTimerR = useRef(null);
+  var _pa = useState(false), paused = _pa[0], setPaused = _pa[1];
+  var cv = useRef(null), pr = useRef([]), sendTimerR = useRef(null), liftCountR = useRef(0);
+
+  var availableTones = getAvailableTones(traceCount || 0);
+  var dormantTones = TONE_KEYS.filter(function(k) { return availableTones.indexOf(k) === -1; });
 
   useEffect(function() { return function() { if (sendTimerR.current) clearTimeout(sendTimerR.current); }; }, []);
 
-  // Tone preview: flash background, play sound, then set tone
   var selectTone = useCallback(function(k) {
     setPreviewTone(k);
     soundTonePreview(k);
     hapticLight();
     setPreviewAlpha(1);
-    // Fade background flash
     var start = Date.now();
     var iv = setInterval(function() {
       var elapsed = Date.now() - start;
@@ -2468,42 +2507,121 @@ function TraceCreationUI({ onSend, onCancel, guided }) {
     }, 20);
   }, []);
 
-  var oD = useCallback(function(ev) { if (!tone || sent) return; var r = ev.currentTarget.getBoundingClientRect(); pr.current = [{ x:(ev.clientX-r.left)/r.width, y:(ev.clientY-r.top)/r.height, t:Date.now() }]; setPath(pr.current.slice()); setDr(true); }, [tone, sent]);
-  var oM = useCallback(function(ev) { if (!dr) return; var r = ev.currentTarget.getBoundingClientRect(); pr.current.push({ x:(ev.clientX-r.left)/r.width, y:(ev.clientY-r.top)/r.height, t:Date.now() }); setPath(pr.current.slice()); }, [dr]);
-  var oU = useCallback(function() { if (!dr) return; setDr(false); if (pr.current.length > 5 && tone) { setSent(true); sendTimerR.current = setTimeout(function() { sendTimerR.current = null; onSend({ tone: tone, path: pr.current }); }, 1800); } }, [dr, tone, onSend]);
+  var doSend = useCallback(function() {
+    if (pr.current.length > 5 && tone) {
+      setSent(true);
+      sendTimerR.current = setTimeout(function() { sendTimerR.current = null; onSend({ tone: tone, path: pr.current }); }, 1800);
+    }
+  }, [tone, onSend]);
 
-  useEffect(function() { var c = cv.current; if (!c || !tone) return; var ctx = c.getContext("2d"), dpr = window.devicePixelRatio || 1, r = c.getBoundingClientRect(); c.width = r.width*dpr; c.height = r.height*dpr; ctx.scale(dpr,dpr); var w = r.width, h = r.height; ctx.clearRect(0,0,w,h); if (path.length < 2) return;
+  var oD = useCallback(function(ev) {
+    if (!tone || sent) return;
+    if (liftCountR.current >= 2) return;
+    var r = ev.currentTarget.getBoundingClientRect();
+    var pt = { x:(ev.clientX-r.left)/r.width, y:(ev.clientY-r.top)/r.height, t:Date.now() };
+    if (pr.current.length > 0 && liftCountR.current === 1) {
+      pr.current.push({ x:pt.x, y:pt.y, t:pt.t, gap:true });
+    } else {
+      pr.current = [pt];
+    }
+    setPath(pr.current.slice());
+    setDr(true);
+    if (paused) setPaused(false);
+  }, [tone, sent, paused]);
+
+  var oM = useCallback(function(ev) {
+    if (!dr) return;
+    var r = ev.currentTarget.getBoundingClientRect();
+    pr.current.push({ x:(ev.clientX-r.left)/r.width, y:(ev.clientY-r.top)/r.height, t:Date.now() });
+    setPath(pr.current.slice());
+  }, [dr]);
+
+  var oU = useCallback(function() {
+    if (!dr) return;
+    setDr(false);
+    liftCountR.current += 1;
+    if (liftCountR.current >= 2) {
+      doSend();
+    } else if (pr.current.length > 5) {
+      setPaused(true);
+      hapticLight();
+    }
+  }, [dr, doSend]);
+
+  useEffect(function() {
+    var c = cv.current; if (!c || !tone) return;
+    var ctx = c.getContext("2d"), dpr = window.devicePixelRatio || 1, r = c.getBoundingClientRect();
+    c.width = r.width*dpr; c.height = r.height*dpr; ctx.scale(dpr,dpr);
+    var w = r.width, h = r.height; ctx.clearRect(0,0,w,h); if (path.length < 2) return;
     var cols = TONES[tone].colors, ch = TONES[tone].ch; ctx.lineCap = "round"; ctx.lineJoin = "round";
-    for (var i = 1; i < path.length; i++) { var p0 = path[i-1], p1 = path[i], dt = p1.t-p0.t, dd = dst(p0.x,p0.y,p1.x,p1.y), speed = dt>0?dd/(dt/1000):0, lw = clamp(8-speed*9,1.5,12);
-      if (ch==="sharp") lw = clamp(3-speed*5,0.8,5); if (ch==="round") lw = clamp(10-speed*6,3,14); if (ch==="bounce") lw = 3+Math.sin(i*0.8)*3;
-      ctx.beginPath(); ctx.moveTo(p0.x*w,p0.y*h); ctx.lineTo(p1.x*w,p1.y*h); ctx.strokeStyle = cols[1]+hex2(ch==="sharp"?15:35); ctx.lineWidth = lw+(ch==="round"?18:14); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(p0.x*w,p0.y*h); ctx.lineTo(p1.x*w,p1.y*h); ctx.strokeStyle = cols[0]+hex2(215); ctx.lineWidth = lw; ctx.stroke(); }
-    var last = path[path.length-1]; var glow = ctx.createRadialGradient(last.x*w,last.y*h,0,last.x*w,last.y*h,32); glow.addColorStop(0,cols[0]+"99"); glow.addColorStop(1,"transparent"); ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(last.x*w,last.y*h,32,0,Math.PI*2); ctx.fill(); }, [path, tone]);
+    for (var i = 1; i < path.length; i++) {
+      if (path[i].gap || path[i-1].gap) continue;
+      var p0 = path[i-1], p1 = path[i], dt = p1.t-p0.t, dd = dst(p0.x,p0.y,p1.x,p1.y), speed = dt>0?dd/(dt/1000):0;
+      var lw = clamp(8-speed*9,1.5,12);
+      if (ch==="sharp") lw = clamp(3-speed*5,0.8,5);
+      if (ch==="round") lw = clamp(10-speed*6,3,14);
+      if (ch==="bounce") lw = 3+Math.sin(i*0.8)*3;
+      if (ch==="still") lw = clamp(4-speed*3,1,6);
+      if (ch==="heavy") lw = clamp(10-speed*4,3,16);
+      if (ch==="vast") lw = clamp(6-speed*5,1,10);
+      if (ch==="pull") lw = clamp(5-speed*6,0.8,8);
+      if (ch==="surrender") lw = clamp(7-speed*5,2,12);
+      ctx.beginPath(); ctx.moveTo(p0.x*w,p0.y*h); ctx.lineTo(p1.x*w,p1.y*h);
+      ctx.strokeStyle = cols[1]+hex2(ch==="sharp"?15:35); ctx.lineWidth = lw+(ch==="round"||ch==="heavy"?18:14); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(p0.x*w,p0.y*h); ctx.lineTo(p1.x*w,p1.y*h);
+      ctx.strokeStyle = cols[0]+hex2(215); ctx.lineWidth = lw; ctx.stroke();
+    }
+    var last = path[path.length-1];
+    if (!last.gap) {
+      var glow = ctx.createRadialGradient(last.x*w,last.y*h,0,last.x*w,last.y*h,32);
+      glow.addColorStop(0,cols[0]+"99"); glow.addColorStop(1,"transparent");
+      ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(last.x*w,last.y*h,32,0,Math.PI*2); ctx.fill();
+    }
+  }, [path, tone]);
 
-  if (sent) { var sc2 = TONES[tone]?TONES[tone].primary:"#888"; return <div style={{ position:"absolute",inset:0,zIndex:20,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT }}><div style={{ width:40,height:40,borderRadius:"50%",background:sc2,opacity:0.6,boxShadow:"0 0 40px "+sc2+"88",animation:"sendPulse 1.5s ease infinite" }} /><p style={{ color:"rgba(255,255,255,0.6)",fontSize:12,letterSpacing:"0.2em",fontWeight:200,marginTop:20 }}>TRACE SENT</p></div>; }
+  if (sent) {
+    var sc2 = TONES[tone]?TONES[tone].primary:"#888";
+    return <div style={{ position:"absolute",inset:0,zIndex:20,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT }}>
+      <div style={{ width:40,height:40,borderRadius:"50%",background:sc2,opacity:0.6,boxShadow:"0 0 40px "+sc2+"88",animation:"sendPulse 1.5s ease infinite" }} />
+      <p style={{ color:"rgba(255,255,255,0.6)",fontSize:12,letterSpacing:"0.2em",fontWeight:200,marginTop:20 }}>TRACE SENT</p>
+    </div>;
+  }
 
   if (!tone) {
     var pvRgb = previewTone && TONES[previewTone] ? TONES[previewTone].rgb : null;
     return <div style={{ position:"absolute",inset:0,zIndex:20,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",fontFamily:FONT }}>
-    {/* Tone preview background flash */}
-    {pvRgb && previewAlpha > 0 ? <div style={{ position:"absolute",inset:0,background:"rgba("+pvRgb[0]+","+pvRgb[1]+","+pvRgb[2]+","+(previewAlpha*0.08)+")",pointerEvents:"none",zIndex:0,transition:"background 0.1s" }} /> : null}
-    <button onClick={onCancel} style={{ position:"absolute",top:14,right:14,zIndex:25,background:"none",border:"none",color:"rgba(255,255,255,0.58)",fontSize:20,cursor:"pointer",padding:10 }}>{"\u2715"}</button>
-    <div style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:36,position:"relative",zIndex:1 }}>
-      {guided ? <p style={{ color:"rgba(255,255,255,0.63)",fontSize:12,fontWeight:200,letterSpacing:"0.15em",lineHeight:1.8,textAlign:"center" }}>choose how your trace<br/>should feel</p> : null}
-      <p style={{ color:"rgba(255,255,255,0.57)",fontSize:13,letterSpacing:"0.3em",fontWeight:200 }}>EMOTIONAL TONE</p>
-      <div style={{ display:"flex",gap:24,flexWrap:"wrap",justifyContent:"center" }}>
-        {TONE_KEYS.map(function(k) {
-          var isPreview = previewTone === k;
-          return <div key={k} onClick={function() { if (!previewTone) selectTone(k); }} style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:10,cursor:previewTone?"default":"pointer",transition:"transform 0.3s, opacity 0.3s",transform:isPreview?"scale(1.15)":"scale(1)",opacity:previewTone&&!isPreview?0.3:1 }}>
-          <div style={{ width:50,height:50,borderRadius:"50%",background:"radial-gradient(circle at 36% 36%, "+TONES[k].colors[0]+", "+TONES[k].colors[1]+")",border:"1.5px solid rgba(255,255,255,0.06)",boxShadow:isPreview?"0 0 40px "+TONES[k].primary+"88":"0 0 28px "+TONES[k].primary+"55",transition:"transform 0.3s, box-shadow 0.3s" }} />
-          <span style={{ color:TONES[k].primary,fontSize:13,letterSpacing:"0.1em",opacity:0.7,fontWeight:300 }}>{TONES[k].name}</span></div>; })}
-      </div></div></div>; }
+      {pvRgb && previewAlpha > 0 ? <div style={{ position:"absolute",inset:0,background:"rgba("+pvRgb[0]+","+pvRgb[1]+","+pvRgb[2]+","+(previewAlpha*0.08)+")",pointerEvents:"none",zIndex:0 }} /> : null}
+      <button onClick={onCancel} style={{ position:"absolute",top:14,right:14,zIndex:25,background:"none",border:"none",color:"rgba(255,255,255,0.58)",fontSize:20,cursor:"pointer",padding:10 }}>{"\u2715"}</button>
+      <div style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:36,position:"relative",zIndex:1,padding:"0 20px" }}>
+        {guided ? <p style={{ color:"rgba(255,255,255,0.63)",fontSize:12,fontWeight:200,letterSpacing:"0.15em",lineHeight:1.8,textAlign:"center" }}>choose how your trace<br/>should feel</p> : null}
+        <p style={{ color:"rgba(255,255,255,0.57)",fontSize:13,letterSpacing:"0.3em",fontWeight:200 }}>EMOTIONAL TONE</p>
+        <div style={{ display:"flex",gap:20,flexWrap:"wrap",justifyContent:"center",maxWidth:340 }}>
+          {availableTones.map(function(k) {
+            var isPreview = previewTone === k;
+            return <div key={k} onClick={function() { if (!previewTone) selectTone(k); }} style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:10,cursor:previewTone?"default":"pointer",transition:"transform 0.3s, opacity 0.3s",transform:isPreview?"scale(1.15)":"scale(1)",opacity:previewTone&&!isPreview?0.3:1 }}>
+              <div style={{ width:50,height:50,borderRadius:"50%",background:"radial-gradient(circle at 36% 36%, "+TONES[k].colors[0]+", "+TONES[k].colors[1]+")",border:"1.5px solid rgba(255,255,255,0.06)",boxShadow:isPreview?"0 0 40px "+TONES[k].primary+"88":"0 0 28px "+TONES[k].primary+"55",transition:"transform 0.3s, box-shadow 0.3s" }} />
+              <span style={{ color:TONES[k].primary,fontSize:13,letterSpacing:"0.1em",opacity:0.7,fontWeight:300 }}>{TONES[k].name}</span>
+            </div>;
+          })}
+          {dormantTones.map(function(k) {
+            var th = TONE_UNLOCK_THRESHOLDS[k] || 0;
+            return <div key={k} style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:10,opacity:0.18 }}>
+              <div style={{ width:50,height:50,borderRadius:"50%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.05)" }} />
+              <span style={{ color:"rgba(255,255,255,0.3)",fontSize:11,letterSpacing:"0.05em",fontWeight:200 }}>{th}</span>
+            </div>;
+          })}
+        </div>
+      </div>
+    </div>;
+  }
+
+  var hintText = paused ? "LIFT AGAIN TO SEND" : (path.length > 5 ? "LIFT TO PAUSE" : guided ? "draw something" : "DRAW YOUR TRACE");
 
   return <div style={{ position:"absolute",inset:0,zIndex:20,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",fontFamily:FONT }}>
     <button onClick={onCancel} style={{ position:"absolute",top:14,right:14,zIndex:25,background:"none",border:"none",color:"rgba(255,255,255,0.58)",fontSize:20,cursor:"pointer",padding:10 }}>{"\u2715"}</button>
     <div style={{ padding:"22px 0",textAlign:"center",display:"flex",alignItems:"center",justifyContent:"center",gap:10 }}>
-      <div style={{ width:8,height:8,borderRadius:"50%",background:TONES[tone].primary,boxShadow:"0 0 14px "+TONES[tone].primary+"99" }} />
-      <span style={{ color:"rgba(255,255,255,0.63)",fontSize:14,letterSpacing:"0.16em",fontWeight:200 }}>{path.length>5?"RELEASE TO SEND":guided?"now draw something":"DRAW YOUR TRACE"}</span>
+      <div style={{ width:8,height:8,borderRadius:"50%",background:TONES[tone].primary,boxShadow:"0 0 14px "+TONES[tone].primary+"99",animation:paused?"gentlePulse 1.5s ease infinite":"none" }} />
+      <span style={{ color:"rgba(255,255,255,0.63)",fontSize:14,letterSpacing:"0.16em",fontWeight:200 }}>{hintText}</span>
     </div>
     <div style={{ flex:1,position:"relative",cursor:"crosshair",touchAction:"none" }} onPointerDown={oD} onPointerMove={oM} onPointerUp={oU}>
       <canvas ref={cv} style={{ position:"absolute",inset:0,width:"100%",height:"100%" }} />
