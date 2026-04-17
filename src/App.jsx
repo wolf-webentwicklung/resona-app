@@ -2211,7 +2211,7 @@ function IncomingMomentDisplay({ event, pair, onDismiss }) {
 
   useEffect(function() {
     var s = Date.now();
-    var dur = extra.whisper_word ? 8000 : extra.echo_mark ? 10000 : extra.amplified ? 10000 : 6000;
+    var dur = extra.whisper_word ? 8000 : extra.echo_mark ? 10000 : extra.amplified ? 10000 : extra.tone_resonance ? 4500 : 6000;
     var iv = setInterval(function() {
       var pr = (Date.now()-s)/dur;
       if (pr >= 1) { clearInterval(iv); onDismiss(); }
@@ -2606,6 +2606,7 @@ function TraceCreationUI({ onSend, onCancel, guided, traceCount }) {
   var _pv = useState(null), previewTone = _pv[0], setPreviewTone = _pv[1];
   var _pvA = useState(0), previewAlpha = _pvA[0], setPreviewAlpha = _pvA[1];
   var _pa = useState(false), paused = _pa[0], setPaused = _pa[1];
+  var _lc = useState(0), liftCount = _lc[0], setLiftCount = _lc[1];
   var cv = useRef(null), pr = useRef([]), sendTimerR = useRef(null), liftCountR = useRef(0);
 
   var availableTones = getAvailableTones(traceCount || 0);
@@ -2659,8 +2660,16 @@ function TraceCreationUI({ onSend, onCancel, guided, traceCount }) {
     if (!dr) return;
     setDr(false);
     liftCountR.current += 1;
+    setLiftCount(liftCountR.current);
     if (liftCountR.current >= 2) {
-      doSend();
+      if (pr.current.length > 5) {
+        doSend();
+      } else {
+        // Path too short on second lift — reset to first-lift state so user can retry
+        liftCountR.current = 1;
+        setLiftCount(1);
+        setPaused(true);
+      }
     } else if (pr.current.length > 5) {
       setPaused(true);
       hapticLight();
@@ -2734,7 +2743,11 @@ function TraceCreationUI({ onSend, onCancel, guided, traceCount }) {
     </div>;
   }
 
-  var hintText = paused ? "LIFT AGAIN TO SEND" : (path.length > 5 ? "LIFT TO PAUSE" : guided ? "draw something" : "DRAW YOUR TRACE");
+  var hintText = paused
+    ? "LIFT AGAIN TO SEND"
+    : liftCount >= 1
+      ? (path.length > 5 ? "LIFT TO SEND" : "DRAW MORE")
+      : (path.length > 5 ? "LIFT TO PAUSE" : guided ? "draw something" : "DRAW YOUR TRACE");
 
   return <div style={{ position:"absolute",inset:0,zIndex:20,background:"rgba(6,6,12,0.97)",display:"flex",flexDirection:"column",fontFamily:FONT }}>
     <button onClick={onCancel} style={{ position:"absolute",top:14,right:14,zIndex:25,background:"none",border:"none",color:"rgba(255,255,255,0.58)",fontSize:20,cursor:"pointer",padding:10 }}>{"\u2715"}</button>

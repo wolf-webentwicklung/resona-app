@@ -474,9 +474,11 @@ export async function getStreakData(userId) {
     return { current: 0, totalDays: uniqueDates.length };
   }
 
+  // If last trace was yesterday (not today), start checking from yesterday
+  const startOffset = uniqueDates[0] === today ? 0 : 1;
   let current = 0;
   for (let i = 0; i < uniqueDates.length; i++) {
-    const d = new Date(Date.now() - i * 86400000);
+    const d = new Date(Date.now() - (i + startOffset) * 86400000);
     const checkDate = d.toISOString().slice(0, 10);
     if (uniqueDates[i] === checkDate) current++;
     else break;
