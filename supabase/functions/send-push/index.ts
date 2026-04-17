@@ -72,6 +72,11 @@ serve(async (req: Request) => {
     return new Response("Pair not found", { status: 404, headers: CORS_HEADERS });
   }
 
+  // Caller must be a member of the requested pair (prevents push spam to arbitrary pairs)
+  if (pair.user_a_id !== user.id && pair.user_b_id !== user.id) {
+    return new Response("Forbidden", { status: 403, headers: CORS_HEADERS });
+  }
+
   const partnerId = pair.user_a_id === user.id ? pair.user_b_id : pair.user_a_id;
 
   // Get partner push subscription

@@ -151,7 +151,7 @@ export async function getPendingTrace(userId) {
     .is('discovered_at', null)
     .order('created_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
   return data;
 }
 
@@ -207,8 +207,8 @@ export async function getLastResonanceEvent(pairId) {
     .eq('pair_id', pairId)
     .order('triggered_at', { ascending: false })
     .limit(1)
-    .single();
-  return data; // null if no events
+    .maybeSingle();
+  return data;
 }
 
 // ── Resonance Events: get unseen events for a user ──
@@ -252,7 +252,7 @@ export async function getLastStillHere(pairId, userId) {
     .filter('extra_data->>sender_id', 'eq', userId)
     .order('triggered_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
   return data;
 }
 
@@ -271,7 +271,7 @@ export async function getLastNudge(pairId, userId) {
     .filter('extra_data->>sender_id', 'eq', userId)
     .order('triggered_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
   return data;
 }
 
@@ -284,7 +284,7 @@ export async function getLastSentTrace(userId) {
     .is('discovered_at', null)
     .order('created_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
   return data;
 }
 
@@ -346,7 +346,7 @@ export async function getActiveProposal(pairId, type) {
     .in('status', ['pending', 'accepted'])
     .order('created_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
   return data;
 }
 
@@ -392,9 +392,10 @@ export async function proposeReveal(pairId, userId) {
 
 export async function respondToProposal(proposalId, accept) {
   if (!proposalId) throw new Error("No proposal ID");
-  const { error } = await supabase.from('pair_proposals')
-    .update({ status: accept ? 'accepted' : 'declined', responded_at: new Date().toISOString() })
-    .eq('id', proposalId);
+  const { error } = await supabase.rpc('respond_to_proposal', {
+    p_proposal_id: proposalId,
+    p_accept: accept,
+  });
   if (error) throw error;
 }
 
@@ -423,7 +424,7 @@ export async function getLastPairTrace(pairId) {
     .eq('pair_id', pairId)
     .order('created_at', { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
   return data;
 }
 
@@ -518,7 +519,7 @@ export async function getRecoveryToken(userId) {
     .from('users')
     .select('recovery_token')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
   return data?.recovery_token || null;
 }
 

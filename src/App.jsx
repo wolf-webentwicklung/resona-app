@@ -738,12 +738,22 @@ function ResonanceSpace({ user, pair, onDissolve }) {
           if (cs) { setSentTone(null); }
         }
 
-        // Check for unseen resonance events from partner
-        // Mark all seen to prevent re-showing on next reload, then display most recent
+        // Check for unseen resonance events from partner — show each one sequentially
         var unseen = await getUnseenEvents(pair.id, user.id, pair);
         if (unseen.length > 0) {
-          unseen.forEach(function(ev) { markEventSeen(ev.id, user.id, pair).catch(function() {}); });
-          handleIncomingEvent(unseen[unseen.length - 1]);
+          // Filter out own events (extra_data.sender_id check done inside handleIncomingEvent)
+          var unseenFromPartner = unseen.filter(function(ev) {
+            return !(ev.extra_data && ev.extra_data.sender_id === user.id);
+          });
+          if (unseenFromPartner.length > 0) {
+            // Queue all except the first; show the first now
+            unseenQueueR.current = unseenFromPartner.slice(1);
+            handleIncomingEvent(unseenFromPartner[0]);
+          }
+          // Mark own events seen immediately (they were filtered above)
+          unseen.filter(function(ev) {
+            return ev.extra_data && ev.extra_data.sender_id === user.id;
+          }).forEach(function(ev) { markEventSeen(ev.id, user.id, pair).catch(function() {}); });
         }
 
         // Check for active proposals (priority: reunion date > reveal > reset)
@@ -874,8 +884,10 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     markEventSeen(event.id, user.id, pair).catch(function() {});
   }, [user, pair]);
 
-  // ── Queued trace: received while in "creating" phase ──
+  // ── Queued trace: received while not idle (creating, discovering, revealing, glimpse) ──
   var pendingTraceRef = useRef(null);
+  // ── Unseen events queue: shown one at a time after dismissal ──
+  var unseenQueueR = useRef([]);
   var sentCountR = useRef(0);
   var ghostChapterR = useRef(null); // faint echo of previous chapter after Start Fresh
 
@@ -927,13 +939,13 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         setSentTone(null); setTurnWaiting(false); setTurnNudgeReady(false); setTurnNudgeSent(false);
         soundIncoming();
         hapticMedium();
-      } else if (phR.current === "creating") {
-        // Queue the trace — will be shown when creating phase ends
+      } else {
+        // Queue for any non-idle phase — processed when phase returns to idle
         pendingTraceRef.current = newTrace;
       }
       // Push notification handled server-side — no inline Notification() to avoid duplicates
     });
-    return function() { sub.unsubscribe(); };
+    return function() { supabase.removeChannel(sub); };
   }, [user]);
 
   // ── Realtime: resonance events from partner ──
@@ -945,7 +957,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         handleIncomingEvent(event);
       }
     });
-    return function() { sub.unsubscribe(); };
+    return function() { supabase.removeChannel(sub); };
   }, [pair, user, handleIncomingEvent]);
 
   // ── Realtime: detect if partner dissolved the connection ──
@@ -956,7 +968,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         setDissolved(true);
       }
     });
-    return function() { sub.unsubscribe(); };
+    return function() { supabase.removeChannel(sub); };
   }, [pair]);
 
   // ── Realtime: reunion changes ──
@@ -1018,7 +1030,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         }
       }
     });
-    return function() { sub.unsubscribe(); };
+    return function() { supabase.removeChannel(sub); };
   }, [pair, user]);
 
   // ── Reconnection on visibility change ──
@@ -1043,7 +1055,13 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         // Re-check for unseen events
         var unseen = await getUnseenEvents(pair.id, user.id, pair);
         if (unseen.length > 0 && !incomingMoment) {
-          handleIncomingEvent(unseen[0]);
+          var unseenFromPartner = unseen.filter(function(ev) {
+            return !(ev.extra_data && ev.extra_data.sender_id === user.id);
+          });
+          if (unseenFromPartner.length > 0 && unseenQueueR.current.length === 0) {
+            unseenQueueR.current = unseenFromPartner.slice(1);
+            handleIncomingEvent(unseenFromPartner[0]);
+          }
         }
       } catch (e) { console.warn("Reconnect check failed:", e); }
     };
@@ -1084,6 +1102,20 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       return function() { clearTimeout(noticeT); clearTimeout(revealT); };
     }
   }, [phase, trace]);
+
+  // ── Process queued trace when returning to idle (Bug 1 + Bug 2) ──
+  // Handles traces that arrived during creating/discovering/revealing/glimpse phases.
+  useEffect(function() {
+    if (phase === "idle" && pendingTraceRef.current) {
+      var qt = pendingTraceRef.current;
+      pendingTraceRef.current = null;
+      setTrace(qt);
+      setPhase("discovery");
+      setCanSend(false);
+      setSentTone(null); setTurnWaiting(false); setTurnNudgeReady(false); setTurnNudgeSent(false);
+      soundIncoming(); hapticMedium();
+    }
+  }, [phase]);
 
   // ── Idle timer ──
   useEffect(function() {
@@ -1651,14 +1683,6 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   // ── Send trace ──
   var onSendTrace = useCallback(async function(data) {
-    // Check if a trace arrived while we were in "creating"
-    if (pendingTraceRef.current) {
-      var qt = pendingTraceRef.current; pendingTraceRef.current = null;
-      setTrace(qt); setPhase("discovery"); setCanSend(false);
-      setSentTone(null); setTurnWaiting(false); setTurnNudgeReady(false); setTurnNudgeSent(false);
-      soundIncoming(); hapticMedium();
-      return;
-    }
     setPhase("idle"); setCanSend(false); setSentTone(data.tone);
     setSentAt(Date.now()); setNudgeReady(false); setNudgeSent(false);
     soundSend(); hapticSend();
@@ -1850,8 +1874,14 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     setStillHereHold(0);
   }, []);
 
-  // ── Dismiss incoming partner moment ──
-  var dismissIncoming = useCallback(function() { setIncomingMoment(null); }, []);
+  // ── Dismiss incoming partner moment — show next queued event if any ──
+  var dismissIncoming = useCallback(function() {
+    setIncomingMoment(null);
+    if (unseenQueueR.current.length > 0) {
+      var next = unseenQueueR.current.shift();
+      setTimeout(function() { handleIncomingEvent(next); }, 600);
+    }
+  }, [handleIncomingEvent]);
 
   // ── Dismiss still-here incoming ──
   useEffect(function() {
@@ -2108,9 +2138,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
       {/* Trace creation */}
       {phase === "creating" ? <TraceCreationUI onSend={onSendTrace} onCancel={function() {
-        var qt = pendingTraceRef.current;
-        if (qt) { pendingTraceRef.current = null; setTrace(qt); setPhase("discovery"); setCanSend(false); setSentTone(null); setTurnWaiting(false); setTurnNudgeReady(false); setTurnNudgeSent(false); soundIncoming(); hapticMedium(); }
-        else { setPhase("idle"); }
+        setPhase("idle");
+        // pendingTraceRef useEffect will handle queued trace if present
       }} guided={onbStep <= 3} traceCount={contribs.length} /> : null}
 
       {/* Moment intros */}
