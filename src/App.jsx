@@ -662,6 +662,13 @@ function ResonanceSpace({ user, pair, onDissolve }) {
           setOnbStep(4);
         }
 
+        // Load ghost chapter (previous artwork echo after Start Fresh)
+        try {
+          var ghostKey = 'resona_ghost_' + pair.id;
+          var ghostRaw = localStorage.getItem(ghostKey);
+          if (ghostRaw) ghostChapterR.current = JSON.parse(ghostRaw);
+        } catch(e) {}
+
         // Check for newly awakened tones
         try {
           var totalTraces = art.length;
@@ -827,6 +834,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   // ── Queued trace: received while in "creating" phase ──
   var pendingTraceRef = useRef(null);
+  var sentCountR = useRef(0);
+  var ghostChapterR = useRef(null); // faint echo of previous chapter after Start Fresh
 
   // ── Realtime: traces ──
   useEffect(function() {
@@ -900,7 +909,12 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         }
         if (proposal.status === "accepted") {
           // Partner accepted — the accepter's UI handler already called executeResetArtwork.
-          // Just clear local state here (for the proposer); completed event will also clear.
+          // Save ghost before clearing (proposer side)
+          try {
+            var ghostKeyP = 'resona_ghost_' + pair.id;
+            var snapP = cbR.current.filter(function(c) { return c.path && c.path.length > 2; }).slice(-4);
+            if (snapP.length > 0) { localStorage.setItem(ghostKeyP, JSON.stringify(snapP)); ghostChapterR.current = snapP; }
+          } catch(e) {}
           setContribs([]);
           setRecTones([]);
           setReunion(null);
@@ -1148,6 +1162,26 @@ function ResonanceSpace({ user, pair, onDissolve }) {
             }
           }
         }
+      }
+
+      // ── Ghost chapter echo (previous artwork after Start Fresh) ──
+      if (ph === "idle" && ghostChapterR.current && cb.length < 15) {
+        var ghostFade = Math.max(0, 1 - cb.length / 15) * 0.018;
+        ghostChapterR.current.forEach(function(gc, gi) {
+          if (!gc.path || gc.path.length < 2 || !TONES[gc.tone]) return;
+          var gt2 = TONES[gc.tone];
+          var gdX = Math.sin(t * 0.04 + gi * 1.8) * 0.012 * w;
+          var gdY = Math.cos(t * 0.033 + gi * 2.4) * 0.010 * h;
+          ctx.globalAlpha = ghostFade / (gi + 1);
+          ctx.globalCompositeOperation = "screen";
+          ctx.beginPath(); ctx.strokeStyle = gt2.primary; ctx.lineWidth = 1; ctx.lineCap = "round";
+          gc.path.forEach(function(pt, i) {
+            var px = pt.x * w + gdX, py = pt.y * h + gdY;
+            i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+          });
+          ctx.stroke();
+          ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+        });
       }
 
       // ── Idle touch ripples (Hebel 5) ──
@@ -1553,38 +1587,35 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     if (onbStepR.current < 4) setOnbStep(4);
     try {
       await sendTrace(pair.id, user.id, partnerId, data.path, data.tone, cbR.current.length === 0);
-      var newContribs = cbR.current.concat([{ tone: data.tone, path: data.path }]);
+      sentCountR.current += 1;
       setContribs(function(prev) { return prev.concat([{ tone: data.tone, path: data.path }]); });
       setRecTones(function(prev) { return [data.tone].concat(prev).slice(0, 20); });
       setLastTone(data.tone);
 
-      // Gesture memory: once after 20 own traces, show one-time subtle observation
+      // Gesture memory: once after 20 own sends, show one-time subtle observation
       try {
-        var myCount = newContribs.filter(function(c) { return true; }).length;
         var shownKey = 'resona_gesture_memory_' + (pair ? pair.id : '');
-        if (myCount === 20 && !localStorage.getItem(shownKey)) {
+        if (sentCountR.current === 20 && !localStorage.getItem(shownKey)) {
           localStorage.setItem(shownKey, '1');
-          var myPaths = newContribs.slice(-20).map(function(c) { return c.path; }).filter(Boolean);
-          if (myPaths.length >= 10) {
+          // Collect paths from all my sends (approximated from path data.path only available now)
+          // Use the gesture data we have right now as representative sample
+          var myPath = data.path;
+          if (myPath && myPath.length > 2) {
             var totalLen = 0, totalDirChanges = 0;
-            myPaths.forEach(function(p) {
-              if (!p || p.length < 2) return;
-              for (var i = 1; i < p.length; i++) {
-                totalLen += Math.sqrt((p[i].x-p[i-1].x)**2 + (p[i].y-p[i-1].y)**2);
-                if (i > 1) {
-                  var cx = p[i-1].x-p[i-2].x, cy = p[i-1].y-p[i-2].y;
-                  var dx = p[i].x-p[i-1].x, dy = p[i].y-p[i-1].y;
-                  if (Math.abs(cx*dy-cy*dx) > 0.0001) totalDirChanges++;
-                }
+            for (var gi = 1; gi < myPath.length; gi++) {
+              totalLen += Math.sqrt((myPath[gi].x-myPath[gi-1].x)**2 + (myPath[gi].y-myPath[gi-1].y)**2);
+              if (gi > 1) {
+                var gcx = myPath[gi-1].x-myPath[gi-2].x, gcy = myPath[gi-1].y-myPath[gi-2].y;
+                var gdx = myPath[gi].x-myPath[gi-1].x, gdy = myPath[gi].y-myPath[gi-1].y;
+                if (Math.abs(gcx*gdy-gcy*gdx) > 0.0001) totalDirChanges++;
               }
-            });
-            var avgLen = totalLen / myPaths.length;
-            var avgDir = totalDirChanges / myPaths.length;
-            var obs = avgDir > 12 ? "your traces carry a lot of turns" :
-                      avgLen < 0.4 ? "you tend to draw short" :
-                      avgLen > 0.9 ? "your traces reach far" :
-                      avgDir < 4 ? "your traces pull in one direction" : null;
-            if (obs) setMilestone(obs);
+            }
+            var avgDir = totalDirChanges / Math.max(1, myPath.length);
+            var obs = avgDir > 0.6 ? "your traces carry a lot of turns" :
+                      totalLen < 0.3 ? "you tend to draw short" :
+                      totalLen > 1.2 ? "your traces reach far" :
+                      avgDir < 0.15 ? "your traces pull in one direction" : null;
+            if (obs) setTimeout(function() { setMilestone(obs); setTimeout(function() { setMilestone(null); }, 5000); }, 3000);
           }
         }
       } catch(e) {}
@@ -2071,6 +2102,12 @@ function ResonanceSpace({ user, pair, onDissolve }) {
           if (accept) {
             executeResetArtwork(pair.id).then(function() {
               completeProposal(reunion.id).catch(function(){});
+              // Save ghost snapshot before clearing
+              try {
+                var ghostKey = 'resona_ghost_' + pair.id;
+                var snap = cbR.current.filter(function(c) { return c.path && c.path.length > 2; }).slice(-4);
+                if (snap.length > 0) { localStorage.setItem(ghostKey, JSON.stringify(snap)); ghostChapterR.current = snap; }
+              } catch(e) {}
               setContribs([]); setRecTones([]); setReunion(null); setReunionUI(null);
             }).catch(function(e) { console.error("Reset error:", e); setAppError(e.message || "Reset failed."); setReunionUI(null); });
           } else { setReunionUI(null); }
@@ -2188,6 +2225,13 @@ function IncomingMomentDisplay({ event, pair, onDismiss }) {
     return <div style={{ position:"absolute",top:"38%",left:0,right:0,textAlign:"center",zIndex:38,pointerEvents:"none",fontFamily:FONT }}>
       <div style={{ marginBottom:12,color:"rgba(255,255,255,"+(al*0.18)+")",fontSize:13,letterSpacing:"0.3em",fontWeight:200 }}>A WHISPER FROM YOUR PERSON</div>
       <span style={{ fontSize:30,fontWeight:200,letterSpacing:"0.35em",color:"rgba("+rgb+","+(al*0.7)+")",textShadow:"0 0 35px rgba("+rgb+","+(al*0.25)+")" }}>{extra.whisper_word}</span>
+    </div>;
+  }
+
+  // Tone resonance — silent visual pulse, no text
+  if (extra.tone_resonance) {
+    return <div style={{ position:"absolute",inset:0,zIndex:38,pointerEvents:"none",display:"flex",alignItems:"center",justifyContent:"center" }}>
+      {[0,1,2].map(function(i) { return <div key={i} style={{ position:"absolute",width:(80+i*60)*al,height:(80+i*60)*al,borderRadius:"50%",background:"radial-gradient(circle, rgba("+rgb+","+(al*0.12/(i+1))+") 0%, transparent 70%)" }} />; })}
     </div>;
   }
 

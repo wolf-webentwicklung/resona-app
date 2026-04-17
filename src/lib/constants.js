@@ -361,13 +361,15 @@ export function computeDiscoveryMode(tone, feel, isFirstTrace) {
   if (isFirstTrace) return 'stillness';
   if (!feel) return 'stillness';
 
-  if (tone === 'playfulness') return 'follow';
+  if (tone === 'playfulness' || tone === 'staunen') return 'follow';
 
-  if (tone === 'longing' || tone === 'tension') {
+  if (tone === 'longing' || tone === 'tension' || tone === 'begehren') {
     if (feel.duration > 1500 || feel.intensity > 0.35) return 'wake';
   }
 
-  if (feel.speed > 0.5 && feel.complexity > 0.3 && tone !== 'nearness' && tone !== 'warmth') {
+  if (tone === 'ruhe' || tone === 'trauer') return 'stillness';
+
+  if (feel.speed > 0.5 && feel.complexity > 0.3 && tone !== 'nearness' && tone !== 'warmth' && tone !== 'hingabe') {
     return 'follow';
   }
 

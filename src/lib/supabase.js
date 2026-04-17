@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { analyzeGestureFeel } from './constants.js';
+import { analyzeGestureFeel, TONE_DISCOVERY } from './constants.js';
 
 // ═══════════════════════════════════════════
 // RESONA — SUPABASE CONFIG
@@ -93,26 +93,11 @@ export async function canSendTrace(userId) {
 
 // ── Traces: send a trace ──
 export async function sendTrace(pairId, senderId, receiverId, path, tone, isFirstTrace) {
-  // Tone-based discovery parameters — radii sized for finger touch targets
-  var toneParams = {
-    nearness:    { baseRadius: 0.15, preferSignal: 'drift' },
-    warmth:      { baseRadius: 0.13, preferSignal: null },
-    playfulness: { baseRadius: 0.12, preferSignal: null },
-    longing:     { baseRadius: 0.10, preferSignal: null },
-    tension:     { baseRadius: 0.08, preferSignal: null },
-  };
-  var tp = toneParams[tone] || { baseRadius: 0.08, preferSignal: null };
+  var tp = TONE_DISCOVERY[tone] || { baseRadius: 0.08, preferSignal: null };
   var signals = ['shimmer','pulse','drift','flicker','density','wave'];
   var feel = analyzeGestureFeel(path);
 
-  // Override frontend-passed isFirstTrace with DB truth — avoids stale closure / race condition
-  var { count } = await supabase
-    .from('traces')
-    .select('id', { count: 'exact', head: true })
-    .eq('pair_id', pairId)
-    .eq('sender_id', senderId);
-  var isFirst = (count != null && count === 0);
-
+  // Use pair total count for discovery mode: first 10 pair traces = stillness
   var { count: pairCount } = await supabase
     .from('traces')
     .select('id', { count: 'exact', head: true })
