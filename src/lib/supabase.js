@@ -504,3 +504,30 @@ export async function sendPushToPartner(eventType, pairId) {
     body: JSON.stringify({ event_type: eventType, pair_id: pairId }),
   });
 }
+
+// ── Recovery: generate a 6-char token tied to this user ──
+export async function generateRecoveryToken(userId) {
+  const { data, error } = await supabase.rpc('generate_recovery_token', { p_user_id: userId });
+  if (error) throw error;
+  return data;
+}
+
+// ── Recovery: read existing token (null if not generated yet) ──
+export async function getRecoveryToken(userId) {
+  const { data } = await supabase
+    .from('users')
+    .select('recovery_token')
+    .eq('id', userId)
+    .single();
+  return data?.recovery_token || null;
+}
+
+// ── Recovery: transfer old account to current anonymous session ──
+export async function recoverAccount(token, newUserId) {
+  const { data, error } = await supabase.rpc('recover_account', {
+    p_token: token.toUpperCase().trim(),
+    p_new_user_id: newUserId,
+  });
+  if (error) throw error;
+  return data;
+}

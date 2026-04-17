@@ -10,6 +10,7 @@ import {
   sendStillHere, getLastStillHere, sendNudge, getLastNudge, getLastSentTrace,
   getLastPairTrace, createCanvasChannel, sendCanvasBroadcast, saveSharedCanvas,
   getStreakData, savePushSubscription, sendPushToPartner,
+  generateRecoveryToken, getRecoveryToken, recoverAccount,
   supabase
 } from './lib/supabase.js';
 import { detectMoment, persistMoment } from './lib/moments.js';
@@ -38,7 +39,7 @@ function urlBase64ToUint8Array(base64String) {
 // ══════════════════════════════════════
 // WELCOME SCREEN — with subtle trace animation
 // ══════════════════════════════════════
-function Welcome({ onStart, onSignIn }) {
+function Welcome({ onStart, onSignIn, onRecover }) {
   var _a = useState(0), al = _a[0], sa = _a[1];
   var cvRef = useRef(null);
   useEffect(function() { setTimeout(function() { sa(1); }, 300); }, []);
@@ -114,6 +115,9 @@ function Welcome({ onStart, onSignIn }) {
       </div>
       <div onClick={function(ev) { ev.stopPropagation(); onSignIn(); }} style={{ position:"relative",zIndex:1,marginTop:24,cursor:"pointer",padding:"8px 16px" }}>
         <span style={{ color:"rgba(255,255,255,0.52)",fontSize:12,letterSpacing:"0.1em",fontWeight:200 }}>already have an account?</span>
+      </div>
+      <div onClick={function(ev) { ev.stopPropagation(); onRecover(); }} style={{ position:"relative",zIndex:1,marginTop:8,cursor:"pointer",padding:"6px 16px" }}>
+        <span style={{ color:"rgba(255,255,255,0.3)",fontSize:11,letterSpacing:"0.1em",fontWeight:200 }}>recover my space</span>
       </div>
     </div>
   );
@@ -473,8 +477,8 @@ export default function App() {
 
   var handleStart = useCallback(function() { setAppPhase("onboarding"); }, []);
   var handleSignIn = useCallback(function() { setAppPhase("signin"); }, []);
+  var handleRecover = useCallback(function() { setAppPhase("recovery"); }, []);
   var handleSignInDone = useCallback(async function() {
-    // After magic link sign-in, re-check user and pair
     try {
       var u = await ensureUser();
       setUser(u);
@@ -483,11 +487,26 @@ export default function App() {
         setPair(p);
         setAppPhase("space");
       } else {
-        // Signed in but no pair — go to pairing
         setAppPhase("pairing");
       }
     } catch (e) {
       console.error("Sign-in check error:", e);
+      setAppPhase("welcome");
+    }
+  }, []);
+  var handleRecoveryDone = useCallback(async function() {
+    try {
+      var u = await ensureUser();
+      setUser(u);
+      var p = await getPair(u.id);
+      if (p && p.status === "active") {
+        setPair(p);
+        setAppPhase("space");
+      } else {
+        setAppPhase("welcome");
+      }
+    } catch (e) {
+      console.error("Recovery done error:", e);
       setAppPhase("welcome");
     }
   }, []);
@@ -524,8 +543,9 @@ export default function App() {
     );
   }
 
-  if (appPhase === "welcome") return <Welcome onStart={handleStart} onSignIn={handleSignIn} />;
+  if (appPhase === "welcome") return <Welcome onStart={handleStart} onSignIn={handleSignIn} onRecover={handleRecover} />;
   if (appPhase === "signin") return <SignInUI onDone={handleSignInDone} onBack={handleSignInBack} />;
+  if (appPhase === "recovery") return <RecoveryUI user={user} onDone={handleRecoveryDone} onBack={function() { setAppPhase("welcome"); }} />;
   if (appPhase === "onboarding") return <Onboarding onDone={handleOnboardingDone} />;
   if (appPhase === "pairing") return <PairSetup onPaired={handlePaired} userId={user ? user.id : null} />;
   return <ResonanceSpace user={user} pair={pair} onDissolve={handleDissolve} />;
@@ -555,6 +575,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
   var guest = isGuest(user);
   var _ob = useState(0), onbStep = _ob[0], setOnbStep = _ob[1];
   var _err = useState(null), appError = _err[0], setAppError = _err[1];
+  var _recTok = useState(null), recoveryToken = _recTok[0], setRecoveryToken = _recTok[1];
+  var _recTokGen = useState(false), generatingRecovToken = _recTokGen[0], setGeneratingRecovToken = _recTokGen[1];
 
   // ── Moment state (single moment, not queue) ──
   var _mp = useState(null), mPhase = _mp[0], setMPhase = _mp[1];
@@ -658,6 +680,15 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     return function() { clearTimeout(t); };
   }, [appError]);
 
+  // ── Load recovery token when settings opens (guests only) ──
+  useEffect(function() {
+    if (!showSettings || !guest || !user) return;
+    if (recoveryToken !== null) return; // already loaded
+    getRecoveryToken(user.id).then(function(tok) {
+      setRecoveryToken(tok || "");
+    }).catch(function() { setRecoveryToken(""); });
+  }, [showSettings, guest, user]);
+
   // ── Initial load ──
   useEffect(function() {
     if (!pair) return;
@@ -708,9 +739,11 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         }
 
         // Check for unseen resonance events from partner
+        // Mark all seen to prevent re-showing on next reload, then display most recent
         var unseen = await getUnseenEvents(pair.id, user.id, pair);
         if (unseen.length > 0) {
-          handleIncomingEvent(unseen[0]);
+          unseen.forEach(function(ev) { markEventSeen(ev.id, user.id, pair).catch(function() {}); });
+          handleIncomingEvent(unseen[unseen.length - 1]);
         }
 
         // Check for active proposals (priority: reunion date > reveal > reset)
@@ -834,10 +867,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     if (event.type === 'nudge' && event.extra_data && event.extra_data.sender_id !== user.id) {
       setNudgeIncoming(event);
       markEventSeen(event.id, user.id, pair).catch(function() {});
-      // Browser notification for nudge
-      if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
-        try { new Notification('Resona', { body: 'someone is thinking of you', icon: '/icon-192.png', tag: 'nudge' }); } catch (e) {}
-      }
+      // Push notification handled server-side — no inline Notification() to avoid duplicates
       return;
     }
     setIncomingMoment(event);
@@ -901,10 +931,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         // Queue the trace — will be shown when creating phase ends
         pendingTraceRef.current = newTrace;
       }
-      // Browser notification when in background
-      if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
-        try { new Notification('Resona', { body: 'someone left something for you', icon: '/icon-192.png', tag: 'trace' }); } catch (e) {}
-      }
+      // Push notification handled server-side — no inline Notification() to avoid duplicates
     });
     return function() { sub.unsubscribe(); };
   }, [user]);
@@ -1690,12 +1717,13 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   // ── Send nudge ──
   var doSendNudge = useCallback(async function() {
-    setNudgeConfirm(false); setNudgeSent(true); setNudgeReady(false);
+    setNudgeConfirm(false); setNudgeReady(false);
     soundNudge(); hapticLight();
     try {
       await sendNudge(pair.id, user.id);
+      setNudgeSent(true);
       sendPushToPartner('nudge', pair.id).catch(function() {});
-    } catch (e) { console.error("Nudge error:", e); }
+    } catch (e) { console.error("Nudge error:", e); setNudgeReady(true); }
   }, [pair, user]);
 
   // ── Turn-reminder timer ──
@@ -1709,12 +1737,13 @@ function ResonanceSpace({ user, pair, onDissolve }) {
 
   // ── Send turn reminder ──
   var doSendTurnNudge = useCallback(async function() {
-    setTurnNudgeConfirm(false); setTurnNudgeSent(true); setTurnNudgeReady(false);
+    setTurnNudgeConfirm(false); setTurnNudgeReady(false);
     soundNudge(); hapticLight();
     try {
       await sendNudge(pair.id, user.id);
+      setTurnNudgeSent(true);
       sendPushToPartner('turn_reminder', pair.id).catch(function() {});
-    } catch (e) { console.error("Turn nudge error:", e); }
+    } catch (e) { console.error("Turn nudge error:", e); setTurnNudgeReady(true); }
   }, [pair, user]);
 
   // ── Shared Canvas: broadcast channel ──
@@ -1807,7 +1836,9 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         clearInterval(stillHereHoldRef.current); stillHereHoldRef.current = null;
         setStillHereHold(0); setStillHereReady(false); setStillHereSent(true);
         soundStillHere(); hapticLight();
-        sendStillHere(pair.id, user.id).catch(function(e) { console.error("Still-here error:", e); });
+        sendStillHere(pair.id, user.id)
+          .then(function() { sendPushToPartner('still_here', pair.id).catch(function() {}); })
+          .catch(function(e) { console.error("Still-here error:", e); });
         // Reset sent indicator after 3s
         setTimeout(function() { setStillHereSent(false); }, 3000);
       }
@@ -1910,7 +1941,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       </div> : null}
 
       {/* PWA install prompt (only after first trace, only once) */}
-      <InstallPrompt traceCount={contribs.length} />
+      <InstallPrompt traceCount={contribs.length} user={user} guest={guest} onOpenEmail={function() { setShowEmail(true); }} />
 
       {/* Email linking overlay */}
       {showEmail ? <EmailLinkUI onDone={function() { setShowEmail(false); }} /> : null}
@@ -1951,7 +1982,36 @@ function ResonanceSpace({ user, pair, onDissolve }) {
                   <span style={{ color:"rgba(224,122,95,0.6)",fontSize:14,fontWeight:300 }}>Guest Mode</span>
                 </div>
                 <div style={{ color:"rgba(255,255,255,0.52)",fontSize:13,fontWeight:200,lineHeight:1.6,marginBottom:12 }}>Your account is tied to this device. If you clear your browser data, you lose access.</div>
-                <div onClick={function() { setShowSettings(false); setShowEmail(true); }} style={{ color:"rgba(212,165,116,0.7)",fontSize:14,fontWeight:300,letterSpacing:"0.08em",cursor:"pointer" }}>Secure with Email</div>
+                <div onClick={function() { setShowSettings(false); setShowEmail(true); }} style={{ color:"rgba(212,165,116,0.7)",fontSize:14,fontWeight:300,letterSpacing:"0.08em",cursor:"pointer",marginBottom:16 }}>Secure with Email</div>
+                {/* Recovery Code */}
+                <div style={{ background:"rgba(255,255,255,0.03)",borderRadius:12,padding:"14px 16px",marginBottom:4 }}>
+                  <div style={{ color:"rgba(255,255,255,0.45)",fontSize:12,letterSpacing:"0.1em",fontWeight:200,marginBottom:8 }}>RECOVERY CODE</div>
+                  {recoveryToken === null ? (
+                    <div style={{ color:"rgba(255,255,255,0.3)",fontSize:12,fontWeight:200 }}>loading…</div>
+                  ) : recoveryToken ? (
+                    <div>
+                      <div style={{ display:"flex",alignItems:"center",gap:12,marginBottom:8 }}>
+                        <span style={{ color:"rgba(212,165,116,0.8)",fontSize:22,fontWeight:300,letterSpacing:"0.35em" }}>{recoveryToken}</span>
+                        <div onClick={function() { try { navigator.clipboard.writeText(recoveryToken); } catch(e) {} }} style={{ cursor:"pointer",padding:"4px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",color:"rgba(255,255,255,0.4)",fontSize:11,fontWeight:200 }}>copy</div>
+                      </div>
+                      <div style={{ color:"rgba(255,255,255,0.35)",fontSize:11,fontWeight:200,lineHeight:1.6 }}>Write this down. Use it on Welcome → "recover my space" if you ever lose access.</div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ color:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:200,lineHeight:1.6,marginBottom:10 }}>Generate a code to recover your space if you lose access to this device.</div>
+                      <div onClick={async function() {
+                        setGeneratingRecovToken(true);
+                        try {
+                          var tok = await generateRecoveryToken(user.id);
+                          setRecoveryToken(tok);
+                        } catch(e) { console.error("Recovery token error:", e); }
+                        setGeneratingRecovToken(false);
+                      }} style={{ cursor:"pointer",color:"rgba(212,165,116,0.7)",fontSize:13,fontWeight:300,letterSpacing:"0.08em" }}>
+                        {generatingRecovToken ? "generating…" : "Generate Recovery Code"}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <div style={{ display:"flex",alignItems:"center",gap:8 }}>
@@ -2135,7 +2195,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {reunionUI === "confirm_reveal" ? <ConfirmOverlay
         title="REVEAL ARTWORK" text={"see everything you\u2019ve created together\nyour person will need to agree too"}
         confirmLabel="SEND REQUEST" confirmColor="212,165,116"
-        onConfirm={function() { proposeReveal(pair.id, user.id).then(function() { setReunionUI(null); }).catch(function(e) { console.error("Reveal propose error:", e); setAppError(e.message || "Failed to send request."); setReunionUI(null); }); }}
+        onConfirm={function() { proposeReveal(pair.id, user.id).then(function() { setReunionUI(null); sendPushToPartner('proposal', pair.id).catch(function(){}); }).catch(function(e) { console.error("Reveal propose error:", e); setAppError(e.message || "Failed to send request."); setReunionUI(null); }); }}
         onCancel={function() { setReunionUI(null); }}
       /> : null}
 
@@ -2143,7 +2203,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {reunionUI === "confirm_reset" ? <ConfirmOverlay
         title="START FRESH" text={"all traces and artwork will be cleared\nyou can build something new together\nyour person will need to agree too"}
         confirmLabel="SEND REQUEST" confirmColor="255,255,255"
-        onConfirm={function() { proposeReset(pair.id, user.id).then(function() { setReunionUI(null); }).catch(function(e) { console.error("Reset propose error:", e); setAppError(e.message || "Failed to send request."); setReunionUI(null); }); }}
+        onConfirm={function() { proposeReset(pair.id, user.id).then(function() { setReunionUI(null); sendPushToPartner('proposal', pair.id).catch(function(){}); }).catch(function(e) { console.error("Reset propose error:", e); setAppError(e.message || "Failed to send request."); setReunionUI(null); }); }}
         onCancel={function() { setReunionUI(null); }}
       /> : null}
 
@@ -2303,11 +2363,18 @@ function IncomingMomentDisplay({ event, pair, onDismiss }) {
 // ══════════════════════════════════════
 // PWA INSTALL PROMPT
 // Shows once after first trace exchange — persisted in localStorage
-// beforeinstallprompt is captured early in main.jsx (window.__deferredInstallPrompt)
+// For iOS guests: shows recovery code step first
+// beforeinstallprompt captured early in main.jsx (window.__deferredInstallPrompt)
 // ══════════════════════════════════════
-function InstallPrompt({ traceCount }) {
+function InstallPrompt({ traceCount, user, guest, onOpenEmail }) {
   var _s = useState(false), show = _s[0], setShow = _s[1];
   var _dip = useState(null), deferredPrompt = _dip[0], setDeferredPrompt = _dip[1];
+  // iOS guests see recovery step first, then install steps
+  var _step = useState("check"), step = _step[0], setStep = _step[1]; // check | install
+  var _recTok = useState(null), recTok = _recTok[0], setRecTok = _recTok[1];
+  var _genning = useState(false), genning = _genning[0], setGenning = _genning[1];
+
+  var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 
   useEffect(function() {
     if (traceCount < 1) return;
@@ -2316,12 +2383,14 @@ function InstallPrompt({ traceCount }) {
     if (isStandalone) return;
     try { if (localStorage.getItem("resona_install_dismissed")) return; } catch(e) {}
 
-    // Pick up the prompt captured early in main.jsx (avoids missing the one-time event)
     if (window.__deferredInstallPrompt) setDeferredPrompt(window.__deferredInstallPrompt);
-
-    // Also listen in case it fires after React mounts (some browsers re-fire)
     var handler = function(e) { e.preventDefault(); setDeferredPrompt(e); window.__deferredInstallPrompt = e; };
     window.addEventListener("beforeinstallprompt", handler);
+
+    // Load existing recovery token for the check step (iOS guests only)
+    if (isIOS && guest && user) {
+      getRecoveryToken(user.id).then(function(tok) { setRecTok(tok || ""); }).catch(function() { setRecTok(""); });
+    }
 
     var t = setTimeout(function() { setShow(true); }, 3000);
     return function() { clearTimeout(t); window.removeEventListener("beforeinstallprompt", handler); };
@@ -2342,41 +2411,103 @@ function InstallPrompt({ traceCount }) {
     }
   }, [deferredPrompt]);
 
-  if (!show) return null;
-
-  var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
   var canNativeInstall = !!deferredPrompt;
 
+  if (!show) return null;
+
+  // iOS guests: show recovery/email step before install instructions
+  var needsRecoveryStep = isIOS && guest && step === "check";
+
+  var cardStyle = { pointerEvents:"auto",maxWidth:320,padding:"28px 24px",borderRadius:20,background:"rgba(17,17,24,0.97)",border:"1px solid rgba(255,255,255,0.08)",fontFamily:FONT,textAlign:"center",animation:"fadeIn 0.8s ease",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)" };
+
   return <div style={{ position:"absolute",inset:0,zIndex:56,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none" }}>
-    <div style={{ pointerEvents:"auto",maxWidth:300,padding:"28px 28px",borderRadius:20,background:"rgba(17,17,24,0.96)",border:"1px solid rgba(255,255,255,0.08)",fontFamily:FONT,textAlign:"center",animation:"fadeIn 0.8s ease",backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)" }}>
-      <div style={{ color:"rgba(255,255,255,0.57)",fontSize:13,letterSpacing:"0.15em",fontWeight:300,marginBottom:14 }}>Add to Home Screen</div>
-      {canNativeInstall ? (
+    <div style={cardStyle}>
+
+      {/* ── iOS guest: save account before installing ── */}
+      {needsRecoveryStep ? (
         <div>
-          <div style={{ color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,lineHeight:1.8,marginBottom:20 }}>Add Resona to your home screen for the best experience — full screen, no browser UI.</div>
+          <div style={{ width:4,height:4,borderRadius:"50%",background:"rgba(212,165,116,0.5)",margin:"0 auto 16px" }} />
+          <div style={{ color:"rgba(255,255,255,0.58)",fontSize:13,letterSpacing:"0.15em",fontWeight:300,marginBottom:12 }}>Before you install</div>
+          <div style={{ color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,lineHeight:1.8,marginBottom:20 }}>
+            When you add Resona to your home screen, it opens as a separate app. Without a saved account, your space and pairing won't carry over.
+          </div>
+          {recTok === null ? (
+            <div style={{ color:"rgba(255,255,255,0.3)",fontSize:12,marginBottom:20 }}>loading…</div>
+          ) : recTok ? (
+            <div style={{ background:"rgba(212,165,116,0.06)",border:"1px solid rgba(212,165,116,0.15)",borderRadius:12,padding:"12px 16px",marginBottom:20 }}>
+              <div style={{ color:"rgba(255,255,255,0.4)",fontSize:11,letterSpacing:"0.1em",marginBottom:6 }}>YOUR RECOVERY CODE</div>
+              <div style={{ color:"rgba(212,165,116,0.85)",fontSize:22,fontWeight:300,letterSpacing:"0.35em",marginBottom:8 }}>{recTok}</div>
+              <div style={{ color:"rgba(255,255,255,0.35)",fontSize:11,fontWeight:200,lineHeight:1.6 }}>Write this down — you can use it to recover your space if you lose access.</div>
+            </div>
+          ) : (
+            <div style={{ marginBottom:20 }}>
+              <div style={{ color:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:200,lineHeight:1.7,marginBottom:12 }}>Save a recovery code or link your email first.</div>
+              <div onClick={async function() {
+                if (!user) return;
+                setGenning(true);
+                try { var tok = await generateRecoveryToken(user.id); setRecTok(tok); } catch(e) {}
+                setGenning(false);
+              }} style={{ cursor:"pointer",color:"rgba(212,165,116,0.7)",fontSize:13,fontWeight:300,marginBottom:10,letterSpacing:"0.05em" }}>
+                {genning ? "generating…" : "Generate Recovery Code"}
+              </div>
+              <div style={{ color:"rgba(255,255,255,0.25)",fontSize:11,fontWeight:200 }}>or</div>
+              <div onClick={function() { dismiss(); if (onOpenEmail) onOpenEmail(); }} style={{ cursor:"pointer",color:"rgba(212,165,116,0.5)",fontSize:12,fontWeight:200,marginTop:6,letterSpacing:"0.05em" }}>Link Email Instead</div>
+            </div>
+          )}
+          <div style={{ display:"flex",gap:12,justifyContent:"center" }}>
+            <div onClick={dismiss} style={{ padding:"10px 18px",borderRadius:20,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.35)",fontSize:12,fontWeight:200 }}>later</div>
+            <div onClick={function() { setStep("install"); }} style={{ padding:"10px 18px",borderRadius:20,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.06)",cursor:"pointer",color:"rgba(212,165,116,0.7)",fontSize:12,fontWeight:300 }}>Continue →</div>
+          </div>
+        </div>
+
+      /* ── Android: native install prompt ── */
+      ) : canNativeInstall ? (
+        <div>
+          <div style={{ color:"rgba(255,255,255,0.57)",fontSize:13,letterSpacing:"0.15em",fontWeight:300,marginBottom:14 }}>Add to Home Screen</div>
+          <div style={{ color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,lineHeight:1.8,marginBottom:20 }}>Add Resona to your home screen for full-screen mode and push notifications.</div>
           <div style={{ display:"flex",gap:12,justifyContent:"center" }}>
             <div onClick={dismiss} style={{ padding:"10px 20px",borderRadius:20,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.45)",fontSize:12,fontWeight:200 }}>not now</div>
             <div onClick={install} style={{ padding:"10px 20px",borderRadius:20,border:"1px solid rgba(212,165,116,0.2)",background:"rgba(212,165,116,0.06)",cursor:"pointer",color:"rgba(212,165,116,0.7)",fontSize:12,fontWeight:300 }}>Add</div>
           </div>
         </div>
+
+      /* ── iOS: step-by-step instructions ── */
       ) : isIOS ? (
         <div>
-          <div style={{ color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,lineHeight:1.9,marginBottom:8 }}>
-            1. Tap <span style={{ color:"rgba(212,165,116,0.7)",fontSize:15,verticalAlign:"middle" }}>{"\u2191"}</span> in Safari's toolbar
+          <div style={{ color:"rgba(255,255,255,0.57)",fontSize:13,letterSpacing:"0.15em",fontWeight:300,marginBottom:16 }}>Add to Home Screen</div>
+          <div style={{ color:"rgba(196,30,58,0.65)",fontSize:12,fontWeight:300,lineHeight:1.7,marginBottom:16,background:"rgba(196,30,58,0.06)",border:"1px solid rgba(196,30,58,0.15)",borderRadius:10,padding:"10px 14px" }}>
+            Push notifications on iPhone only work when the app is installed — not in the browser.
           </div>
-          <div style={{ color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,lineHeight:1.9,marginBottom:20 }}>
-            2. Choose <span style={{ color:"rgba(212,165,116,0.7)",fontStyle:"normal" }}>Add to Home Screen</span>
+          <div style={{ textAlign:"left",marginBottom:20 }}>
+            <div style={{ display:"flex",gap:10,alignItems:"flex-start",marginBottom:10 }}>
+              <span style={{ color:"rgba(212,165,116,0.6)",fontSize:12,fontWeight:300,minWidth:16 }}>1.</span>
+              <span style={{ color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,lineHeight:1.7 }}>Open this page in <strong style={{ color:"rgba(255,255,255,0.6)",fontWeight:300 }}>Safari</strong> (not Chrome)</span>
+            </div>
+            <div style={{ display:"flex",gap:10,alignItems:"flex-start",marginBottom:10 }}>
+              <span style={{ color:"rgba(212,165,116,0.6)",fontSize:12,fontWeight:300,minWidth:16 }}>2.</span>
+              <span style={{ color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,lineHeight:1.7 }}>Tap the <strong style={{ color:"rgba(255,255,255,0.6)",fontWeight:300 }}>Share</strong> button <span style={{ fontSize:14,verticalAlign:"middle" }}>{"\u2B06\uFE0E"}</span> at the bottom of the screen</span>
+            </div>
+            <div style={{ display:"flex",gap:10,alignItems:"flex-start",marginBottom:10 }}>
+              <span style={{ color:"rgba(212,165,116,0.6)",fontSize:12,fontWeight:300,minWidth:16 }}>3.</span>
+              <span style={{ color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,lineHeight:1.7 }}>Scroll down and tap <strong style={{ color:"rgba(212,165,116,0.7)",fontWeight:300 }}>Add to Home Screen</strong></span>
+            </div>
+            <div style={{ display:"flex",gap:10,alignItems:"flex-start" }}>
+              <span style={{ color:"rgba(212,165,116,0.6)",fontSize:12,fontWeight:300,minWidth:16 }}>4.</span>
+              <span style={{ color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,lineHeight:1.7 }}>Tap <strong style={{ color:"rgba(255,255,255,0.6)",fontWeight:300 }}>Add</strong> — then open from your home screen</span>
+            </div>
           </div>
-          <div style={{ color:"rgba(255,255,255,0.35)",fontSize:11,fontWeight:200,lineHeight:1.7,marginBottom:20 }}>
-            This gives you full-screen mode and enables push notifications.
-          </div>
-          <div onClick={dismiss} style={{ padding:"10px 20px",borderRadius:20,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,display:"inline-block" }}>Got it</div>
+          <div onClick={dismiss} style={{ padding:"10px 24px",borderRadius:20,border:"1px solid rgba(255,255,255,0.08)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,display:"inline-block" }}>Got it</div>
         </div>
+
+      /* ── Other browsers ── */
       ) : (
         <div>
-          <div style={{ color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,lineHeight:1.8,marginBottom:20 }}>Add Resona to your home screen for the best experience — full screen, no browser UI.</div>
+          <div style={{ color:"rgba(255,255,255,0.57)",fontSize:13,letterSpacing:"0.15em",fontWeight:300,marginBottom:14 }}>Add to Home Screen</div>
+          <div style={{ color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,lineHeight:1.8,marginBottom:20 }}>Add Resona to your home screen for full-screen mode and push notifications.</div>
           <div onClick={dismiss} style={{ padding:"10px 20px",borderRadius:20,border:"1px solid rgba(255,255,255,0.06)",cursor:"pointer",color:"rgba(255,255,255,0.5)",fontSize:12,fontWeight:200,display:"inline-block" }}>Got it</div>
         </div>
       )}
+
     </div>
   </div>;
 }
@@ -2859,6 +2990,7 @@ function ReunionPropose({ pair, user, onDone }) {
     setSending(true);
     try {
       var reu = await proposeReunion(pair.id, user.id, dateVal);
+      sendPushToPartner('proposal', pair.id).catch(function() {});
       onDone(reu);
     } catch (e) {
       console.error("Reunion propose error:", e);
@@ -3157,5 +3289,66 @@ function SignInUI({ onDone, onBack }) {
       </div>
       <div onClick={onBack} style={{ marginTop:16,padding:"12px 32px",borderRadius:20,border:"1px solid rgba(255,255,255,0.08)",cursor:"pointer",color:"rgba(255,255,255,0.57)",fontSize:12,fontWeight:200 }}>BACK</div>
     </div> : null}
+  </div>;
+}
+
+
+// ══════════════════════════════════════
+// RECOVERY UI — enter 6-char code to reclaim lost anonymous account
+// ══════════════════════════════════════
+function RecoveryUI({ user, onDone, onBack }) {
+  var _t = useState(""), token = _t[0], setToken = _t[1];
+  var _s = useState("input"), step = _s[0], setStep = _s[1]; // input | loading | error
+  var _err = useState(null), err = _err[0], setErr = _err[1];
+
+  var submit = async function() {
+    var clean = token.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (clean.length !== 6) return;
+    setStep("loading"); setErr(null);
+    try {
+      var result = await recoverAccount(clean, user.id);
+      if (result && result.error) {
+        var msg = result.error === "invalid_token" ? "Code not recognized. Check for typos." :
+                  result.error === "no_active_pair" ? "No active connection found for this code." :
+                  "Something went wrong. Please try again.";
+        setErr(msg); setStep("error");
+        return;
+      }
+      onDone();
+    } catch (e) {
+      console.error("Recovery error:", e);
+      setErr("Something went wrong. Please try again.");
+      setStep("error");
+    }
+  };
+
+  return <div style={{ position:"absolute",inset:0,zIndex:50,background:"#0A0A12",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:FONT }}>
+    {step === "loading" ? (
+      <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:16 }}>
+        <div style={{ width:6,height:6,borderRadius:"50%",background:"rgba(212,165,116,0.4)",animation:"gentlePulse 1.5s ease infinite" }} />
+        <div style={{ color:"rgba(255,255,255,0.52)",fontSize:12,letterSpacing:"0.15em",fontWeight:200 }}>recovering…</div>
+      </div>
+    ) : (
+      <div style={{ display:"flex",flexDirection:"column",alignItems:"center",gap:20,maxWidth:300,padding:"0 24px" }}>
+        <div style={{ width:2,height:2,borderRadius:"50%",background:"rgba(212,165,116,0.4)",marginBottom:10 }} />
+        <div style={{ color:"rgba(255,255,255,0.57)",fontSize:13,letterSpacing:"0.3em",fontWeight:200 }}>RECOVER MY SPACE</div>
+        <div style={{ color:"rgba(255,255,255,0.52)",fontSize:13,fontWeight:200,lineHeight:1.8,textAlign:"center" }}>
+          Enter your 6-character recovery code.<br/>
+          <span style={{ color:"rgba(255,255,255,0.35)",fontSize:12 }}>You saved this in Settings before.</span>
+        </div>
+        {err ? <div style={{ color:"rgba(196,30,58,0.6)",fontSize:12,fontWeight:200,textAlign:"center" }}>{err}</div> : null}
+        <input
+          value={token}
+          onChange={function(ev) { setToken(ev.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6)); }}
+          placeholder="______"
+          maxLength={6}
+          style={{ fontSize:28,fontWeight:300,letterSpacing:"0.4em",color:"rgba(255,255,255,0.6)",padding:"16px 24px",borderRadius:12,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.1)",textAlign:"center",outline:"none",fontFamily:FONT,width:"100%" }}
+        />
+        <div onClick={submit} style={{ padding:"14px 44px",borderRadius:24,border:"1px solid rgba(212,165,116,0.2)",background:token.length===6?"rgba(212,165,116,0.06)":"transparent",cursor:token.length===6?"pointer":"default",color:token.length===6?"rgba(212,165,116,0.7)":"rgba(255,255,255,0.2)",fontSize:13,letterSpacing:"0.15em",fontWeight:300 }}>RECOVER</div>
+        <div onClick={onBack} style={{ cursor:"pointer",padding:"8px 16px",marginTop:4 }}>
+          <span style={{ color:"rgba(255,255,255,0.35)",fontSize:12,letterSpacing:"0.1em",fontWeight:200 }}>back</span>
+        </div>
+      </div>
+    )}
   </div>;
 }

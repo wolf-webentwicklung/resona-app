@@ -20,6 +20,7 @@ const PUSH_MESSAGES: Record<string, { title: string; body: string }> = {
   nudge: { title: "Resona", body: "someone is waiting for you" },
   still_here: { title: "Resona", body: "your person is here" },
   turn_reminder: { title: "Resona", body: "it's your turn" },
+  proposal: { title: "Resona", body: "your person sent you something" },
 };
 
 serve(async (req: Request) => {
