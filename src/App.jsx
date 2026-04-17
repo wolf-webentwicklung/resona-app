@@ -7,7 +7,7 @@ import {
   subscribeToTraces, subscribeToEvents, subscribeToPair,
   getUnseenEvents, markEventSeen,
   getActiveProposal, proposeReunion, proposeReset, proposeReveal, respondToProposal, completeProposal, executeResetArtwork, subscribeToProposals,
-  sendStillHere, getLastStillHere, sendNudge, getLastNudge, getLastSentTrace,
+  sendStillHere, getLastStillHere, sendNudge, getLastNudge, sendTurnNudge, getLastTurnNudge, getLastSentTrace,
   getLastPairTrace, createCanvasChannel, sendCanvasBroadcast, saveSharedCanvas,
   getStreakData, savePushSubscription, sendPushToPartner,
   generateRecoveryToken, getRecoveryToken, recoverAccount,
@@ -842,11 +842,10 @@ function ResonanceSpace({ user, pair, onDissolve }) {
               setTurnSince(new Date(lastPairTr.discovered_at).getTime());
               var turnHoursAgo = (Date.now() - new Date(lastPairTr.discovered_at).getTime()) / 3600000;
               if (turnHoursAgo >= TURN_REMINDER_DELAY_HOURS) {
-                var lastTurnNdg = await getLastNudge(pair.id, user.id);
+                var lastTurnNdg = await getLastTurnNudge(pair.id, user.id);
                 if (!lastTurnNdg || new Date(lastTurnNdg.triggered_at).getTime() < new Date(lastPairTr.discovered_at).getTime()) {
                   setTurnNudgeReady(true);
                 } else {
-                  // Already sent a turn nudge — don't show again
                   setTurnNudgeReady(false);
                   setTurnNudgeSent(true);
                 }
@@ -1673,13 +1672,22 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     setPhase("idle");
     setCanSend(true);
     setSentTone(null); setNudgeReady(false); setNudgeSent(false); setSentAt(null);
-    // Server check: may override to false if daily limit hit
+    // Server check: may override canSend to false if daily limit hit
     try {
       var cs = await canSendTrace(user.id);
       setCanSend(cs);
     } catch (e) { /* keep canSend(true) on server error */ }
+    // Re-check still_here cooldown — state may be stale from before discovery flow
+    try {
+      var lastSH = await getLastStillHere(pair.id, user.id);
+      if (!lastSH || (Date.now() - new Date(lastSH.triggered_at).getTime()) > STILL_HERE_COOLDOWN_HOURS * 3600000) {
+        setStillHereReady(true);
+      } else {
+        setStillHereReady(false);
+      }
+    } catch (e) { /* keep current state on error */ }
     if (onbStepR.current < 4 && onbStepR.current >= 2) setOnbStep(2);
-  }, [user]);
+  }, [user, pair]);
 
   // ── Send trace ──
   var onSendTrace = useCallback(async function(data) {
@@ -1764,7 +1772,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     setTurnNudgeConfirm(false); setTurnNudgeReady(false);
     soundNudge(); hapticLight();
     try {
-      await sendNudge(pair.id, user.id);
+      await sendTurnNudge(pair.id, user.id);
       setTurnNudgeSent(true);
       sendPushToPartner('turn_reminder', pair.id).catch(function() {});
     } catch (e) { console.error("Turn nudge error:", e); setTurnNudgeReady(true); }
@@ -1773,7 +1781,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
   // ── Shared Canvas: broadcast channel ──
   useEffect(function() {
     if (!pair) return;
-    var ch = createCanvasChannel(pair.id,
+    var ch = createCanvasChannel(pair.id, pair.created_at,
       function(data) { if (data.userId !== user.id) setPartnerStrokes(function(prev) { return prev.concat(data.points || []); }); },
       function(data) {
         // Partner triggered canvas_start — join automatically (use ref to avoid stale closure)

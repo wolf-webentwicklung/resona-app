@@ -256,18 +256,37 @@ export async function getLastStillHere(pairId, userId) {
   return data;
 }
 
-// ── Nudge: send gentle reminder ──
+// ── Nudge: send discovery-wait reminder (trace not yet discovered) ──
 export async function sendNudge(pairId, userId) {
   return await createResonanceEvent(pairId, 'nudge', null, [], { sender_id: userId });
 }
 
-// ── Nudge: get last nudge sent by this user for this pair ──
+// ── Nudge: get last discovery-wait nudge for cooldown ──
 export async function getLastNudge(pairId, userId) {
   const { data } = await supabase
     .from('resonance_events')
     .select('*')
     .eq('pair_id', pairId)
     .eq('type', 'nudge')
+    .filter('extra_data->>sender_id', 'eq', userId)
+    .order('triggered_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data;
+}
+
+// ── Turn nudge: send "it's your turn" reminder (separate type to avoid cooldown collision) ──
+export async function sendTurnNudge(pairId, userId) {
+  return await createResonanceEvent(pairId, 'turn_nudge', null, [], { sender_id: userId });
+}
+
+// ── Turn nudge: get last turn_nudge for cooldown ──
+export async function getLastTurnNudge(pairId, userId) {
+  const { data } = await supabase
+    .from('resonance_events')
+    .select('*')
+    .eq('pair_id', pairId)
+    .eq('type', 'turn_nudge')
     .filter('extra_data->>sender_id', 'eq', userId)
     .order('triggered_at', { ascending: false })
     .limit(1)
@@ -429,8 +448,11 @@ export async function getLastPairTrace(pairId) {
 }
 
 // ── Shared Canvas: create broadcast channel ──
-export function createCanvasChannel(pairId, onStroke, onInvite, onJoin, onDecline) {
-  var ch = supabase.channel('canvas-' + pairId);
+// Channel name includes pair creation timestamp so it's opaque to non-members
+// (pair.created_at is only readable by pair members after RLS fix).
+export function createCanvasChannel(pairId, pairCreatedAt, onStroke, onInvite, onJoin, onDecline) {
+  var suffix = String(new Date(pairCreatedAt).getTime());
+  var ch = supabase.channel('canvas-' + pairId + '-' + suffix);
   ch.on('broadcast', { event: 'stroke' }, function(payload) { if (onStroke) onStroke(payload.payload); });
   ch.on('broadcast', { event: 'canvas_invite' }, function(payload) { if (onInvite) onInvite(payload.payload); });
   ch.on('broadcast', { event: 'canvas_join' }, function(payload) { if (onJoin) onJoin(payload.payload); });
@@ -457,6 +479,14 @@ export async function saveSharedCanvas(pairId, userId, strokes, tone) {
 }
 
 // ── Streak: consecutive days with at least one sent trace ──
+// Uses local dates (not UTC) so streaks don't break for users near midnight UTC.
+function localDateStr(tsMs) {
+  var d = new Date(tsMs);
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
+
 export async function getStreakData(userId) {
   const { data } = await supabase
     .from('traces')
@@ -467,29 +497,31 @@ export async function getStreakData(userId) {
 
   if (!data || data.length === 0) return { current: 0, totalDays: 0 };
 
-  const uniqueDates = [...new Set(data.map(function(t) { return t.created_at.slice(0, 10); }))].sort().reverse();
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const uniqueDates = [...new Set(
+    data.map(function(t) { return localDateStr(new Date(t.created_at).getTime()); })
+  )].sort().reverse();
+
+  const today = localDateStr(Date.now());
+  const yesterday = localDateStr(Date.now() - 86400000);
 
   if (uniqueDates[0] !== today && uniqueDates[0] !== yesterday) {
     return { current: 0, totalDays: uniqueDates.length };
   }
 
-  // If last trace was yesterday (not today), start checking from yesterday
   const startOffset = uniqueDates[0] === today ? 0 : 1;
   let current = 0;
   for (let i = 0; i < uniqueDates.length; i++) {
-    const d = new Date(Date.now() - (i + startOffset) * 86400000);
-    const checkDate = d.toISOString().slice(0, 10);
+    const checkDate = localDateStr(Date.now() - (i + startOffset) * 86400000);
     if (uniqueDates[i] === checkDate) current++;
     else break;
   }
   return { current, totalDays: uniqueDates.length };
 }
 
-// ── Push: save subscription to DB ──
+// ── Push: save subscription to DB via RPC (validates endpoint domain before storing) ──
 export async function savePushSubscription(userId, subscriptionJson) {
-  await supabase.from('users').update({ push_token: subscriptionJson }).eq('id', userId);
+  const { error } = await supabase.rpc('save_push_token', { p_token: subscriptionJson });
+  if (error) console.warn('savePushSubscription error:', error.message);
 }
 
 // ── Push: call Edge Function to deliver push to partner ──

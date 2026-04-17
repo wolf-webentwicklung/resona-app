@@ -101,6 +101,22 @@ serve(async (req: Request) => {
     });
   }
 
+  // Allowlist push service endpoints to prevent SSRF via stored push_token
+  const ALLOWED_PUSH_PREFIXES = [
+    "https://fcm.googleapis.com/",
+    "https://updates.push.services.mozilla.com/",
+    "https://web.push.apple.com/",
+    "https://push.apple.com/",
+    "https://notify.windows.com/",
+  ];
+  const endpoint: string = subscription?.endpoint ?? "";
+  if (!ALLOWED_PUSH_PREFIXES.some((prefix) => endpoint.startsWith(prefix))) {
+    await supabaseAdmin.from("users").update({ push_token: null }).eq("id", partnerId);
+    return new Response(JSON.stringify({ ok: true, skipped: "endpoint_not_allowed" }), {
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+    });
+  }
+
   const msg = PUSH_MESSAGES[event_type] || { title: "Resona", body: "something happened" };
   const payload = JSON.stringify({
     title: msg.title,
