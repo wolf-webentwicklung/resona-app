@@ -1961,7 +1961,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
   var bottomColor = lastTone ? TONES[lastTone].primary : "rgba(255,255,255,0.2)";
 
   return (
-    <div style={{ width:"100%",height:"100%",position:"relative",overflow:"hidden",background:"#0A0A12",userSelect:"none",WebkitUserSelect:"none",paddingTop:"env(safe-area-inset-top)",paddingBottom:"env(safe-area-inset-bottom)" }}>
+    <div style={{ width:"100%",height:"100%",position:"relative",overflow:"hidden",background:"#0A0A12",userSelect:"none",WebkitUserSelect:"none" }}>
       <canvas ref={cvRef} style={{ position:"absolute",inset:0,width:"100%",height:"100%",touchAction:"none",cursor:phase==="discovery"?"crosshair":"default" }}
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} />
 
@@ -1985,7 +1985,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       {showEmail ? <EmailLinkUI onDone={function() { setShowEmail(false); }} /> : null}
 
       {/* Settings gear */}
-      {phase === "idle" ? <div style={{ position:"absolute",top:18,left:0,right:0,zIndex:11,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 18px",pointerEvents:"none" }}>
+      {phase === "idle" ? <div style={{ position:"absolute",top:"calc(env(safe-area-inset-top) + 18px)",left:0,right:0,zIndex:11,display:"flex",justifyContent:"space-between",alignItems:"center",padding:"0 18px",pointerEvents:"none" }}>
         <div style={{ display:"flex",alignItems:"center",gap:8,pointerEvents:"none" }}>
           {partnerHere ? <div style={{ display:"flex",alignItems:"center",gap:7,padding:"4px 12px 4px 8px",borderRadius:16,background:"rgba(212,165,116,0.06)",border:"1px solid rgba(212,165,116,0.1)" }}>
             <div style={{ width:7,height:7,borderRadius:"50%",background:"rgba(212,165,116,0.7)",boxShadow:"0 0 12px rgba(212,165,116,0.4)",animation:"gentlePulse 3s ease infinite" }} />
@@ -1995,9 +1995,10 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         </div>
         <div onClick={function() { setShowSettings(true); }} style={{ cursor:"pointer",opacity:0.25,fontSize:18,color:"white",pointerEvents:"auto" }}>{"\u2699"}</div>
       </div> : null}
-      {showSettings ? <div style={{ position:"absolute",inset:0,zIndex:48,display:"flex",alignItems:"flex-end",justifyContent:"center",paddingTop:"env(safe-area-inset-top)" }} onClick={function() { setShowSettings(false); }}>
+      {showSettings ? <div style={{ position:"absolute",inset:0,zIndex:48 }} onClick={function() { setShowSettings(false); }}>
         <div style={{ position:"absolute",inset:0,background:"rgba(0,0,0,0.5)" }} />
-        <div onClick={function(ev) { ev.stopPropagation(); }} style={{ position:"relative",width:"100%",maxWidth:400,background:"#111118",borderRadius:"20px 20px 0 0",paddingTop:28,paddingLeft:24,paddingRight:24,paddingBottom:"calc(40px + env(safe-area-inset-bottom))",fontFamily:FONT,maxHeight:"85vh",overflowY:"scroll",WebkitOverflowScrolling:"touch" }}>
+        <div style={{ position:"absolute",top:"env(safe-area-inset-top)",left:0,right:0,bottom:0,display:"flex",alignItems:"flex-end",justifyContent:"center" }} onClick={function() { setShowSettings(false); }}>
+        <div onClick={function(ev) { ev.stopPropagation(); }} style={{ position:"relative",width:"100%",maxWidth:400,background:"#111118",borderRadius:"20px 20px 0 0",paddingTop:28,paddingLeft:24,paddingRight:24,paddingBottom:"calc(40px + env(safe-area-inset-bottom))",fontFamily:FONT,maxHeight:"100%",overflowY:"scroll",WebkitOverflowScrolling:"touch" }}>
           <div style={{ width:32,height:3,borderRadius:2,background:"rgba(255,255,255,0.15)",margin:"0 auto 16px" }} />
           <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20 }}>
             <div style={{ color:"rgba(255,255,255,0.52)",fontSize:13,letterSpacing:"0.25em",fontWeight:200 }}>SETTINGS</div>
@@ -2111,6 +2112,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
             <div onClick={function() { window.location.reload(); }} style={{ color:"rgba(255,255,255,0.3)",fontSize:13,fontWeight:200,letterSpacing:"0.1em",cursor:"pointer" }}>Reload App</div>
             <div style={{ color:"rgba(255,255,255,0.2)",fontSize:11,fontWeight:200,marginTop:4 }}>if something feels stuck</div>
           </div>
+        </div>
         </div>
       </div> : null}
 
