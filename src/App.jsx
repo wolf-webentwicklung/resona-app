@@ -44,7 +44,7 @@ function Welcome({ onStart, onSignIn, onRecover }) {
   var cvRef = useRef(null);
   useEffect(function() { setTimeout(function() { sa(1); }, 300); }, []);
 
-  // Subtle background animation: ghost traces slowly drawing themselves
+  // Space-like background: vivid glowing traces + shimmer particles + breathing glow
   useEffect(function() {
     var c = cvRef.current; if (!c) return;
     var ctx = c.getContext("2d"), dpr = window.devicePixelRatio || 1;
@@ -52,49 +52,79 @@ function Welcome({ onStart, onSignIn, onRecover }) {
     c.width = rect.width * dpr; c.height = rect.height * dpr; ctx.scale(dpr, dpr);
     var w = rect.width, h = rect.height, af;
     var tones = [
-      { rgb: "212,165,116" }, { rgb: "107,82,196" }, { rgb: "224,122,95" }, { rgb: "0,180,216" }
+      { rgb: "212,165,116" }, { rgb: "107,82,196" }, { rgb: "224,122,95" },
+      { rgb: "0,180,216" }, { rgb: "184,122,74" }, { rgb: "139,167,184" },
     ];
-    // Pre-generate some gentle curved paths
     var paths = [];
-    for (var p = 0; p < 4; p++) {
-      var pts = [], cx = 0.2 + Math.random() * 0.6, cy = 0.2 + Math.random() * 0.6;
-      for (var i = 0; i < 40; i++) {
-        var a = (i / 40) * Math.PI * 2 * (0.5 + Math.random() * 0.5);
-        var r = 0.04 + i * 0.002 + Math.sin(i * 0.3) * 0.015;
-        pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+    for (var p = 0; p < 7; p++) {
+      var pts = [];
+      var pcx = 0.12 + Math.random() * 0.76, pcy = 0.1 + Math.random() * 0.8;
+      var startAngle = Math.random() * Math.PI * 2;
+      for (var i = 0; i < 50; i++) {
+        var prog = i / 50;
+        var angle = startAngle + prog * Math.PI * (1.3 + (p % 3) * 0.5);
+        var r = 0.018 + prog * 0.17 + Math.sin(prog * 5 + p * 1.3) * 0.025;
+        pts.push({ x: pcx + Math.cos(angle) * r, y: pcy + Math.sin(angle) * r * 0.72 });
       }
-      paths.push({ pts: pts, tone: tones[p], delay: p * 4, speed: 0.008 + Math.random() * 0.004 });
+      paths.push({ pts: pts, tone: tones[p % tones.length], delay: p * 1.8, speed: 0.005 + (p % 3) * 0.003, glowW: 12 + (p % 4) * 5 });
+    }
+    var particles = [];
+    for (var q = 0; q < 50; q++) {
+      particles.push({ x: Math.random(), y: Math.random(), tone: tones[q % tones.length], phase: Math.random() * Math.PI * 2, speed: 0.25 + Math.random() * 0.45, size: 0.8 + Math.random() * 1.8 });
     }
 
     var start = Date.now();
     function draw() {
       var t = (Date.now() - start) / 1000;
       ctx.clearRect(0, 0, w, h);
+
+      // Breathing center glow
+      var breath = 0.5 + Math.sin(t * 0.55) * 0.5;
+      ctx.globalAlpha = breath * 0.05;
+      ctx.globalCompositeOperation = "screen";
+      var cg = ctx.createRadialGradient(w * 0.5, h * 0.46, 0, w * 0.5, h * 0.46, Math.min(w, h) * 0.55);
+      cg.addColorStop(0, "rgba(212,165,116,0.7)");
+      cg.addColorStop(0.5, "rgba(107,82,196,0.35)");
+      cg.addColorStop(1, "transparent");
+      ctx.fillStyle = cg; ctx.fillRect(0, 0, w, h);
+
+      // Shimmer particles
+      particles.forEach(function(pt) {
+        var pulse = 0.5 + Math.sin(t * pt.speed + pt.phase) * 0.5;
+        ctx.globalAlpha = pulse * 0.2;
+        ctx.globalCompositeOperation = "screen";
+        ctx.fillStyle = "rgba(" + pt.tone.rgb + ",0.9)";
+        ctx.beginPath(); ctx.arc(pt.x * w, pt.y * h, pt.size, 0, Math.PI * 2); ctx.fill();
+      });
+
+      // Traces
       paths.forEach(function(path) {
         var elapsed = t - path.delay;
         if (elapsed < 0) return;
-        var cycle = elapsed * path.speed * 10;
-        var progress = (cycle % 3) / 3; // 0-1 over 3 seconds, then repeats
-        var fadeIn = Math.min(1, progress * 4);
-        var fadeOut = progress > 0.6 ? 1 - (progress - 0.6) / 0.4 : 1;
-        var alpha = fadeIn * fadeOut * 0.12;
-        if (alpha < 0.005) return;
-        var count = Math.floor(path.pts.length * Math.min(1, progress * 2));
+        var cycle = (elapsed * path.speed * 7) % 4.5;
+        var drawProg = Math.min(1, cycle);
+        var fadeIn = Math.min(1, cycle * 2.5);
+        var fadeOut = cycle > 2.8 ? 1 - (cycle - 2.8) / 1.7 : 1;
+        var alpha = fadeIn * fadeOut;
+        if (alpha < 0.01) return;
+        var count = Math.floor(path.pts.length * drawProg);
         if (count < 2) return;
-        ctx.globalAlpha = alpha;
+        // Outer glow
+        ctx.globalAlpha = alpha * 0.25;
         ctx.globalCompositeOperation = "screen";
-        ctx.beginPath();
-        ctx.strokeStyle = "rgba(" + path.tone.rgb + ",0.8)";
-        ctx.lineWidth = 2;
-        ctx.lineCap = "round"; ctx.lineJoin = "round";
-        for (var i = 0; i < count; i++) {
-          var pt = path.pts[i];
-          i === 0 ? ctx.moveTo(pt.x * w, pt.y * h) : ctx.lineTo(pt.x * w, pt.y * h);
-        }
+        ctx.beginPath(); ctx.strokeStyle = "rgba(" + path.tone.rgb + ",0.6)";
+        ctx.lineWidth = path.glowW; ctx.lineCap = "round"; ctx.lineJoin = "round";
+        for (var i = 0; i < count; i++) { var pt = path.pts[i]; i === 0 ? ctx.moveTo(pt.x * w, pt.y * h) : ctx.lineTo(pt.x * w, pt.y * h); }
         ctx.stroke();
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = "source-over";
+        // Core line
+        ctx.globalAlpha = alpha * 0.5;
+        ctx.beginPath(); ctx.strokeStyle = "rgba(" + path.tone.rgb + ",1)";
+        ctx.lineWidth = 2;
+        for (var i2 = 0; i2 < count; i2++) { var pt2 = path.pts[i2]; i2 === 0 ? ctx.moveTo(pt2.x * w, pt2.y * h) : ctx.lineTo(pt2.x * w, pt2.y * h); }
+        ctx.stroke();
       });
+
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
       af = requestAnimationFrame(draw);
     }
     af = requestAnimationFrame(draw);
@@ -236,10 +266,8 @@ function OnboardingAnim({ step, w, h, ctx }) {
       var cx = w / 2, cy = h * 0.35;
       var numTraces = Math.min(5, Math.floor(t * 0.5) + 1);
       var clipR = Math.min(w, h) * 0.22;
-      // Vignette circle
       ctx.save();
       ctx.beginPath(); ctx.arc(cx, cy, clipR, 0, Math.PI * 2); ctx.clip();
-      // Draw accumulated traces
       for (var i = 0; i < numTraces; i++) {
         var tone = tones[i % tones.length];
         var age = (numTraces - i) / numTraces;
@@ -257,16 +285,88 @@ function OnboardingAnim({ step, w, h, ctx }) {
           j === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
         }
         ctx.stroke();
-        // Glow
         ctx.strokeStyle = tone.cols[1] + "33"; ctx.lineWidth = 12;
         ctx.stroke();
       }
       ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
       ctx.restore();
-      // Soft vignette edge
       var eg = ctx.createRadialGradient(cx, cy, clipR * 0.7, cx, cy, clipR * 1.15);
       eg.addColorStop(0, "transparent"); eg.addColorStop(1, "#0A0A12");
       ctx.fillStyle = eg; ctx.fillRect(0, 0, w, h);
+    };
+  }
+  // Step 3: "reveal it when you meet" — artwork builds then bursts into light
+  if (step === 3) {
+    return function(t) {
+      var tones = [
+        { rgb: "212,165,116", cols: ["#D4A574", "#E8C99B"] },
+        { rgb: "107,82,196", cols: ["#4A3198", "#6B52C4"] },
+        { rgb: "224,122,95", cols: ["#E07A5F", "#F2CC8F"] },
+        { rgb: "0,180,216", cols: ["#00B4D8", "#48D1E8"] },
+        { rgb: "196,30,58", cols: ["#C41E3A", "#E03E5A"] },
+      ];
+      var cx = w / 2, cy = h * 0.35;
+      var clipR = Math.min(w, h) * 0.22;
+      // 6s cycle: 0-2.5 build, 2.5-3.3 reveal flash, 3.3-5.5 hold glow, 5.5-6 fade
+      var cycle = t % 6.5;
+      var buildProg = Math.min(1, cycle / 2.5);
+      var numTraces = Math.max(2, Math.round(buildProg * 5));
+      var revealProg = cycle > 2.5 ? Math.min(1, (cycle - 2.5) / 0.8) : 0;
+      var holdAlpha = cycle > 3.3 && cycle < 5.5 ? 1 : cycle > 5.5 ? Math.max(0, 1 - (cycle - 5.5)) : 0;
+
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, clipR, 0, Math.PI * 2); ctx.clip();
+      for (var i = 0; i < numTraces; i++) {
+        var tone = tones[i % tones.length];
+        var age = (numTraces - i) / numTraces;
+        var traceAlpha = (0.2 + age * 0.4) * buildProg;
+        var offA = i * 1.3 + 0.5;
+        ctx.globalAlpha = traceAlpha; ctx.globalCompositeOperation = "screen";
+        ctx.beginPath();
+        ctx.strokeStyle = tone.cols[0]; ctx.lineWidth = 2; ctx.lineCap = "round"; ctx.lineJoin = "round";
+        for (var j = 0; j <= 30; j++) {
+          var p = j / 30;
+          var angle = p * Math.PI * (1.2 + i * 0.4) + offA;
+          var radius = 15 + p * (clipR * 0.7) + Math.sin(p * 4 + i) * 10;
+          var px = cx + Math.cos(angle + i * 0.8) * radius * (0.6 + Math.sin(i * 1.1) * 0.3);
+          var py = cy + Math.sin(angle + i * 0.8) * radius * 0.5;
+          j === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        ctx.strokeStyle = tone.cols[1] + "33"; ctx.lineWidth = 12; ctx.stroke();
+      }
+      ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+      ctx.restore();
+
+      // Vignette
+      var eg2 = ctx.createRadialGradient(cx, cy, clipR * 0.7, cx, cy, clipR * 1.15);
+      eg2.addColorStop(0, "transparent"); eg2.addColorStop(1, "#0A0A12");
+      ctx.fillStyle = eg2; ctx.fillRect(0, 0, w, h);
+
+      // Reveal flash burst
+      if (revealProg > 0) {
+        var flashA = revealProg < 0.5 ? revealProg * 2 : 1 - (revealProg - 0.5) * 2;
+        ctx.globalAlpha = flashA * 0.65;
+        ctx.globalCompositeOperation = "screen";
+        var rg = ctx.createRadialGradient(cx, cy, 0, cx, cy, clipR * 2.2);
+        rg.addColorStop(0, "rgba(255,242,225,0.95)");
+        rg.addColorStop(0.25, "rgba(212,165,116,0.7)");
+        rg.addColorStop(0.6, "rgba(107,82,196,0.3)");
+        rg.addColorStop(1, "transparent");
+        ctx.fillStyle = rg; ctx.fillRect(0, 0, w, h);
+        ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+      }
+
+      // Soft glow hold after reveal
+      if (holdAlpha > 0) {
+        ctx.globalAlpha = holdAlpha * 0.18;
+        ctx.globalCompositeOperation = "screen";
+        var hg = ctx.createRadialGradient(cx, cy, 0, cx, cy, clipR * 1.5);
+        hg.addColorStop(0, "rgba(212,165,116,0.8)");
+        hg.addColorStop(1, "transparent");
+        ctx.fillStyle = hg; ctx.fillRect(0, 0, w, h);
+        ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+      }
     };
   }
   return function() {};
@@ -278,9 +378,10 @@ function Onboarding({ onDone }) {
   var cvRef = useRef(null);
 
   var steps = [
-    { title: "draw what you feel", body: "choose an emotional tone\nand draw a gesture with your finger" },
-    { title: "your person discovers it", body: "your trace appears in their space\nthey search for it and reveal it" },
-    { title: "something grows between you", body: "every trace becomes part of\nan invisible shared artwork" },
+    { title: "draw what you feel", body: "pick one of ten feelings\nand trace it with your finger" },
+    { title: "your person discovers it", body: "your trace appears in their space\nthey search until it reveals itself" },
+    { title: "something grows between you", body: "every trace layers into a shared artwork\ninvisible until you're ready to see it" },
+    { title: "reveal it when you meet", body: "plan a reunion · unveil what you built\nthe moment becomes the meaning" },
   ];
 
   useEffect(function() {
@@ -1996,51 +2097,57 @@ function ResonanceSpace({ user, pair, onDissolve }) {
         <div onClick={function() { setShowSettings(true); }} style={{ cursor:"pointer",opacity:0.25,fontSize:18,color:"white",pointerEvents:"auto" }}>{"\u2699"}</div>
       </div> : null}
       {showSettings ? <div style={{ position:"absolute",inset:0,zIndex:48 }} onClick={function() { setShowSettings(false); }}>
-        <div style={{ position:"absolute",inset:0,background:"rgba(0,0,0,0.5)" }} />
+        <div style={{ position:"absolute",inset:0,background:"rgba(0,0,0,0.65)" }} />
         <div style={{ position:"absolute",top:"env(safe-area-inset-top)",left:0,right:0,bottom:0,display:"flex",alignItems:"flex-end",justifyContent:"center" }} onClick={function() { setShowSettings(false); }}>
-        <div onClick={function(ev) { ev.stopPropagation(); }} style={{ position:"relative",width:"100%",maxWidth:400,background:"#111118",borderRadius:"20px 20px 0 0",paddingTop:28,paddingLeft:24,paddingRight:24,paddingBottom:"calc(40px + env(safe-area-inset-bottom))",fontFamily:FONT,maxHeight:"100%",overflowY:"scroll",WebkitOverflowScrolling:"touch" }}>
-          <div style={{ width:32,height:3,borderRadius:2,background:"rgba(255,255,255,0.15)",margin:"0 auto 16px" }} />
+        <div onClick={function(ev) { ev.stopPropagation(); }} style={{ position:"relative",width:"100%",maxWidth:400,background:"#0d0d15",borderRadius:"24px 24px 0 0",paddingTop:20,paddingLeft:24,paddingRight:24,paddingBottom:"calc(48px + env(safe-area-inset-bottom))",fontFamily:FONT,maxHeight:"92%",overflowY:"auto",WebkitOverflowScrolling:"touch" }}>
+
+          {/* Handle */}
+          <div style={{ width:36,height:3,borderRadius:2,background:"rgba(255,255,255,0.1)",margin:"0 auto 22px" }} />
+
+          {/* Header row */}
           <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20 }}>
-            <div style={{ color:"rgba(255,255,255,0.52)",fontSize:13,letterSpacing:"0.25em",fontWeight:200 }}>SETTINGS</div>
-            <div onClick={function() { setShowSettings(false); }} style={{ cursor:"pointer",color:"rgba(255,255,255,0.3)",fontSize:22,lineHeight:1,padding:"0 4px" }}>{"\u00D7"}</div>
+            <div style={{ color:"rgba(255,255,255,0.35)",fontSize:10,letterSpacing:"0.32em",fontWeight:300 }}>SETTINGS</div>
+            <div onClick={function() { setShowSettings(false); }} style={{ cursor:"pointer",color:"rgba(255,255,255,0.2)",fontSize:22,lineHeight:1,padding:"0 4px" }}>{"\u00D7"}</div>
           </div>
-          <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16 }}>
-            <div style={{ color:"rgba(255,255,255,0.58)",fontSize:14,letterSpacing:"0.08em",fontWeight:200 }}>
-              Connected{dayCount > 1 ? " \u00B7 day " + dayCount : ""}
-              {streakData.current > 1 ? <span style={{ marginLeft:8,color:"rgba(212,165,116,0.6)",fontSize:12,fontWeight:200 }}>{"\u25CF"} {streakData.current}-day streak</span> : null}
+
+          {/* Connection status */}
+          <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",paddingBottom:20,marginBottom:4,borderBottom:"1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ color:"rgba(255,255,255,0.4)",fontSize:13,letterSpacing:"0.05em",fontWeight:200 }}>
+              Connected{dayCount > 1 ? " · day " + dayCount : ""}
+              {streakData.current > 1 ? <span style={{ marginLeft:8,color:"rgba(212,165,116,0.45)",fontSize:12,fontWeight:200 }}>· {streakData.current}-day streak</span> : null}
             </div>
             {partnerHere ? <div style={{ display:"flex",alignItems:"center",gap:6 }}>
-              <div style={{ width:5,height:5,borderRadius:"50%",background:"rgba(212,165,116,0.6)" }} />
-              <span style={{ color:"rgba(212,165,116,0.5)",fontSize:13,fontWeight:200 }}>here now</span>
+              <div style={{ width:5,height:5,borderRadius:"50%",background:"rgba(212,165,116,0.6)",boxShadow:"0 0 8px rgba(212,165,116,0.3)" }} />
+              <span style={{ color:"rgba(212,165,116,0.45)",fontSize:12,fontWeight:200 }}>here now</span>
             </div> : null}
           </div>
 
-          {/* Account */}
-          <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.06)" }}>
+          {/* ── ACCOUNT ── */}
+          <div style={{ paddingTop:20,marginBottom:4 }}>
+            <div style={{ fontSize:10,letterSpacing:"0.28em",color:"rgba(255,255,255,0.18)",fontWeight:300,marginBottom:14 }}>ACCOUNT</div>
             {guest ? (
               <div>
-                <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:8 }}>
-                  <div style={{ width:6,height:6,borderRadius:"50%",background:"rgba(224,122,95,0.5)" }} />
-                  <span style={{ color:"rgba(224,122,95,0.6)",fontSize:14,fontWeight:300 }}>Guest Mode</span>
+                <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:6 }}>
+                  <div style={{ width:6,height:6,borderRadius:"50%",background:"rgba(224,122,95,0.5)",flexShrink:0 }} />
+                  <span style={{ color:"rgba(224,122,95,0.65)",fontSize:14,fontWeight:300 }}>Guest Mode</span>
                 </div>
-                <div style={{ color:"rgba(255,255,255,0.52)",fontSize:13,fontWeight:200,lineHeight:1.6,marginBottom:12 }}>Your account is tied to this device. If you clear your browser data, you lose access.</div>
-                <div onClick={function() { setShowSettings(false); setShowEmail(true); }} style={{ color:"rgba(212,165,116,0.7)",fontSize:14,fontWeight:300,letterSpacing:"0.08em",cursor:"pointer",marginBottom:16 }}>Secure with Email</div>
-                {/* Recovery Code */}
-                <div style={{ background:"rgba(255,255,255,0.03)",borderRadius:12,padding:"14px 16px",marginBottom:4 }}>
-                  <div style={{ color:"rgba(255,255,255,0.45)",fontSize:12,letterSpacing:"0.1em",fontWeight:200,marginBottom:8 }}>RECOVERY CODE</div>
+                <div style={{ color:"rgba(255,255,255,0.28)",fontSize:12,fontWeight:200,lineHeight:1.7,marginBottom:16,paddingLeft:14 }}>Your account is tied to this device. Clear browser data and you lose access.</div>
+                <div onClick={function() { setShowSettings(false); setShowEmail(true); }} style={{ color:"rgba(212,165,116,0.75)",fontSize:14,fontWeight:300,letterSpacing:"0.06em",cursor:"pointer",marginBottom:20 }}>Secure with Email</div>
+                <div style={{ background:"rgba(255,255,255,0.03)",borderRadius:14,padding:"14px 16px",border:"1px solid rgba(255,255,255,0.05)" }}>
+                  <div style={{ color:"rgba(255,255,255,0.25)",fontSize:10,letterSpacing:"0.25em",fontWeight:200,marginBottom:10 }}>RECOVERY CODE</div>
                   {recoveryToken === null ? (
-                    <div style={{ color:"rgba(255,255,255,0.3)",fontSize:12,fontWeight:200 }}>loading…</div>
+                    <div style={{ color:"rgba(255,255,255,0.22)",fontSize:12,fontWeight:200 }}>loading…</div>
                   ) : recoveryToken ? (
                     <div>
                       <div style={{ display:"flex",alignItems:"center",gap:12,marginBottom:8 }}>
-                        <span style={{ color:"rgba(212,165,116,0.8)",fontSize:22,fontWeight:300,letterSpacing:"0.35em" }}>{recoveryToken}</span>
-                        <div onClick={function() { try { navigator.clipboard.writeText(recoveryToken); } catch(e) {} }} style={{ cursor:"pointer",padding:"4px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",color:"rgba(255,255,255,0.4)",fontSize:11,fontWeight:200 }}>copy</div>
+                        <span style={{ color:"rgba(212,165,116,0.85)",fontSize:22,fontWeight:300,letterSpacing:"0.35em" }}>{recoveryToken}</span>
+                        <div onClick={function() { try { navigator.clipboard.writeText(recoveryToken); } catch(e) {} }} style={{ cursor:"pointer",padding:"4px 10px",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)",color:"rgba(255,255,255,0.32)",fontSize:11,fontWeight:200 }}>copy</div>
                       </div>
-                      <div style={{ color:"rgba(255,255,255,0.35)",fontSize:11,fontWeight:200,lineHeight:1.6 }}>Write this down. Use it on Welcome → "recover my space" if you ever lose access.</div>
+                      <div style={{ color:"rgba(255,255,255,0.22)",fontSize:11,fontWeight:200,lineHeight:1.7 }}>Write this down. Use it on Welcome → "recover my space" if you lose access.</div>
                     </div>
                   ) : (
                     <div>
-                      <div style={{ color:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:200,lineHeight:1.6,marginBottom:10 }}>Generate a code to recover your space if you lose access to this device.</div>
+                      <div style={{ color:"rgba(255,255,255,0.28)",fontSize:12,fontWeight:200,lineHeight:1.7,marginBottom:10 }}>Generate a code to recover your space if you lose access to this device.</div>
                       <div onClick={async function() {
                         setGeneratingRecovToken(true);
                         try {
@@ -2048,7 +2155,7 @@ function ResonanceSpace({ user, pair, onDissolve }) {
                           setRecoveryToken(tok);
                         } catch(e) { console.error("Recovery token error:", e); }
                         setGeneratingRecovToken(false);
-                      }} style={{ cursor:"pointer",color:"rgba(212,165,116,0.7)",fontSize:13,fontWeight:300,letterSpacing:"0.08em" }}>
+                      }} style={{ cursor:"pointer",color:"rgba(212,165,116,0.7)",fontSize:13,fontWeight:300,letterSpacing:"0.06em" }}>
                         {generatingRecovToken ? "generating…" : "Generate Recovery Code"}
                       </div>
                     </div>
@@ -2057,61 +2164,69 @@ function ResonanceSpace({ user, pair, onDissolve }) {
               </div>
             ) : (
               <div style={{ display:"flex",alignItems:"center",gap:8 }}>
-                <div style={{ width:6,height:6,borderRadius:"50%",background:"rgba(100,200,100,0.5)" }} />
-                <span style={{ color:"rgba(255,255,255,0.57)",fontSize:14,fontWeight:200 }}>{user.email}</span>
+                <div style={{ width:5,height:5,borderRadius:"50%",background:"rgba(255,255,255,0.18)",flexShrink:0 }} />
+                <span style={{ color:"rgba(255,255,255,0.42)",fontSize:14,fontWeight:200 }}>{user.email}</span>
               </div>
             )}
           </div>
 
-          {/* Reunion */}
-          <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.06)" }}>
-            {reunion && reunion.type === "reunion" && reunion.status === "accepted" ? (
-              <div>
-                <div style={{ color:"rgba(212,165,116,0.7)",fontSize:14,fontWeight:300,letterSpacing:"0.1em",marginBottom:8 }}>
-                  Reunion: {new Date(reunion.proposed_date + "T00:00:00").toLocaleDateString(undefined, { day:"numeric",month:"long" })}
+          {/* ── YOUR CONNECTION ── */}
+          <div style={{ marginTop:28,paddingTop:20,borderTop:"1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ fontSize:10,letterSpacing:"0.28em",color:"rgba(255,255,255,0.18)",fontWeight:300,marginBottom:18 }}>YOUR CONNECTION</div>
+
+            {/* Reunion */}
+            <div style={{ marginBottom:contribs.length > 0 ? 22 : 0 }}>
+              {reunion && reunion.type === "reunion" && reunion.status === "accepted" ? (
+                <div>
+                  <div style={{ color:"rgba(212,165,116,0.75)",fontSize:14,fontWeight:300,letterSpacing:"0.07em",marginBottom:4 }}>
+                    Reunion · {new Date(reunion.proposed_date + "T00:00:00").toLocaleDateString(undefined, { day:"numeric",month:"long" })}
+                  </div>
+                  <div style={{ color:"rgba(255,255,255,0.25)",fontSize:12,fontWeight:200,marginBottom:8 }}>your date is set · artwork will be waiting</div>
+                  <div onClick={function() { respondToProposal(reunion.id, false).then(function() { setReunion(null); setShowSettings(false); setReunionUI("propose"); }).catch(function(){}); }} style={{ color:"rgba(255,255,255,0.28)",fontSize:11,fontWeight:200,cursor:"pointer",letterSpacing:"0.05em" }}>change date</div>
                 </div>
-                <div onClick={function() { respondToProposal(reunion.id, false).then(function() { setReunion(null); setShowSettings(false); setReunionUI("propose"); }).catch(function(){}); }} style={{ color:"rgba(255,255,255,0.47)",fontSize:12,fontWeight:200,cursor:"pointer" }}>change date</div>
-              </div>
-            ) : reunion && reunion.type === "reunion" && reunion.status === "pending" && reunion.proposed_by === user.id ? (
-              <div>
-                <div style={{ color:"rgba(255,255,255,0.6)",fontSize:14,fontWeight:200,letterSpacing:"0.1em",marginBottom:8 }}>
-                  Waiting for your person to accept{"\u2026"}
+              ) : reunion && reunion.type === "reunion" && reunion.status === "pending" && reunion.proposed_by === user.id ? (
+                <div>
+                  <div style={{ color:"rgba(255,255,255,0.42)",fontSize:14,fontWeight:200,letterSpacing:"0.05em",marginBottom:4 }}>waiting for your person to accept…</div>
+                  <div style={{ color:"rgba(255,255,255,0.22)",fontSize:12,fontWeight:200,marginBottom:8 }}>they'll be notified of your proposed date</div>
+                  <div onClick={function() { respondToProposal(reunion.id, false).then(function() { setReunion(null); }).catch(function(){}); }} style={{ color:"rgba(255,255,255,0.25)",fontSize:11,fontWeight:200,cursor:"pointer" }}>cancel</div>
                 </div>
-                <div onClick={function() { respondToProposal(reunion.id, false).then(function() { setReunion(null); }).catch(function(){}); }} style={{ color:"rgba(255,255,255,0.47)",fontSize:12,fontWeight:200,cursor:"pointer" }}>cancel</div>
-              </div>
-            ) : (
-              <div onClick={function() { setShowSettings(false); setReunionUI("propose"); }} style={{ color:"rgba(212,165,116,0.7)",fontSize:14,fontWeight:300,letterSpacing:"0.1em",cursor:"pointer" }}>
-                Plan a Reunion
-              </div>
-            )}
-          </div>
-
-          {/* Reveal Artwork */}
-          {contribs.length > 0 ? <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.06)" }}>
-            <div onClick={function() { setShowSettings(false); setReunionUI("confirm_reveal"); }} style={{ color:"rgba(212,165,116,0.7)",fontSize:14,fontWeight:300,letterSpacing:"0.1em",cursor:"pointer" }}>
-              Reveal Artwork
+              ) : (
+                <div onClick={function() { setShowSettings(false); setReunionUI("propose"); }} style={{ cursor:"pointer" }}>
+                  <div style={{ color:"rgba(212,165,116,0.75)",fontSize:14,fontWeight:300,letterSpacing:"0.07em",marginBottom:4 }}>Plan a Reunion</div>
+                  <div style={{ color:"rgba(255,255,255,0.25)",fontSize:12,fontWeight:200 }}>set a date to meet · reveal your artwork together</div>
+                </div>
+              )}
             </div>
-            <div style={{ color:"rgba(255,255,255,0.57)",fontSize:12,fontWeight:200,marginTop:6 }}>see what you created together</div>
-          </div> : null}
 
-          {/* Start Fresh */}
-          {contribs.length > 0 ? <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.06)" }}>
-            <div onClick={function() { setShowSettings(false); setReunionUI("confirm_reset"); }} style={{ color:"rgba(255,255,255,0.57)",fontSize:14,fontWeight:200,letterSpacing:"0.1em",cursor:"pointer" }}>
-              Start Fresh
+            {/* Reveal Artwork */}
+            {contribs.length > 0 ? <div onClick={function() { setShowSettings(false); setReunionUI("confirm_reveal"); }} style={{ cursor:"pointer" }}>
+              <div style={{ color:"rgba(212,165,116,0.75)",fontSize:14,fontWeight:300,letterSpacing:"0.07em",marginBottom:4 }}>Reveal Artwork</div>
+              <div style={{ color:"rgba(255,255,255,0.25)",fontSize:12,fontWeight:200 }}>see what you created together</div>
+            </div> : null}
+          </div>
+
+          {/* ── MANAGE ── */}
+          <div style={{ marginTop:28,paddingTop:20,borderTop:"1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ fontSize:10,letterSpacing:"0.28em",color:"rgba(255,255,255,0.18)",fontWeight:300,marginBottom:18 }}>MANAGE</div>
+            {contribs.length > 0 ? <div onClick={function() { setShowSettings(false); setReunionUI("confirm_reset"); }} style={{ cursor:"pointer",marginBottom:22 }}>
+              <div style={{ color:"rgba(212,165,116,0.38)",fontSize:14,fontWeight:200,letterSpacing:"0.07em",marginBottom:4 }}>Start Fresh</div>
+              <div style={{ color:"rgba(255,255,255,0.22)",fontSize:12,fontWeight:200 }}>both need to agree · artwork will be cleared</div>
+            </div> : null}
+            <div onClick={function() { if (confirm("Dissolve this connection? This cannot be undone.")) { setShowSettings(false); onDissolve(); } }} style={{ cursor:"pointer" }}>
+              <div style={{ color:"rgba(196,30,58,0.6)",fontSize:14,fontWeight:200,letterSpacing:"0.07em",marginBottom:4 }}>Dissolve Connection</div>
+              <div style={{ color:"rgba(255,255,255,0.22)",fontSize:12,fontWeight:200 }}>end this connection permanently</div>
             </div>
-            <div style={{ color:"rgba(255,255,255,0.57)",fontSize:12,fontWeight:200,marginTop:6 }}>both need to agree · artwork will be cleared</div>
-          </div> : null}
-
-          {/* Dissolve */}
-          <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.06)" }}>
-            <div onClick={function() { if (confirm("Dissolve this connection? This cannot be undone.")) { setShowSettings(false); onDissolve(); } }} style={{ color:"rgba(196,30,58,0.6)",fontSize:14,fontWeight:200,letterSpacing:"0.1em",cursor:"pointer" }}>Dissolve Connection</div>
           </div>
 
-          {/* Reload */}
-          <div style={{ padding:"16px 0",borderTop:"1px solid rgba(255,255,255,0.06)" }}>
-            <div onClick={function() { window.location.reload(); }} style={{ color:"rgba(255,255,255,0.3)",fontSize:13,fontWeight:200,letterSpacing:"0.1em",cursor:"pointer" }}>Reload App</div>
-            <div style={{ color:"rgba(255,255,255,0.2)",fontSize:11,fontWeight:200,marginTop:4 }}>if something feels stuck</div>
+          {/* ── APP ── */}
+          <div style={{ marginTop:28,paddingTop:20,borderTop:"1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ fontSize:10,letterSpacing:"0.28em",color:"rgba(255,255,255,0.18)",fontWeight:300,marginBottom:14 }}>APP</div>
+            <div onClick={function() { window.location.reload(); }} style={{ cursor:"pointer" }}>
+              <div style={{ color:"rgba(255,255,255,0.25)",fontSize:13,fontWeight:200,letterSpacing:"0.07em",marginBottom:4 }}>Reload App</div>
+              <div style={{ color:"rgba(255,255,255,0.15)",fontSize:11,fontWeight:200 }}>if something feels stuck</div>
+            </div>
           </div>
+
         </div>
         </div>
       </div> : null}
