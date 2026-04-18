@@ -1997,9 +1997,12 @@ function ResonanceSpace({ user, pair, onDissolve }) {
       </div> : null}
       {showSettings ? <div style={{ position:"absolute",inset:0,zIndex:48,display:"flex",alignItems:"flex-end",justifyContent:"center" }} onClick={function() { setShowSettings(false); }}>
         <div style={{ position:"absolute",inset:0,background:"rgba(0,0,0,0.5)" }} />
-        <div onClick={function(ev) { ev.stopPropagation(); }} style={{ position:"relative",width:"100%",maxWidth:400,background:"#111118",borderRadius:"20px 20px 0 0",padding:"28px 24px 40px",fontFamily:FONT }}>
-          <div style={{ width:32,height:3,borderRadius:2,background:"rgba(255,255,255,0.15)",margin:"0 auto 24px" }} />
-          <div style={{ color:"rgba(255,255,255,0.52)",fontSize:13,letterSpacing:"0.25em",fontWeight:200,marginBottom:20 }}>SETTINGS</div>
+        <div onClick={function(ev) { ev.stopPropagation(); }} style={{ position:"relative",width:"100%",maxWidth:400,background:"#111118",borderRadius:"20px 20px 0 0",padding:"28px 24px 40px",fontFamily:FONT,maxHeight:"85vh",overflowY:"auto" }}>
+          <div style={{ width:32,height:3,borderRadius:2,background:"rgba(255,255,255,0.15)",margin:"0 auto 16px" }} />
+          <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20 }}>
+            <div style={{ color:"rgba(255,255,255,0.52)",fontSize:13,letterSpacing:"0.25em",fontWeight:200 }}>SETTINGS</div>
+            <div onClick={function() { setShowSettings(false); }} style={{ cursor:"pointer",color:"rgba(255,255,255,0.3)",fontSize:22,lineHeight:1,padding:"0 4px" }}>{"\u00D7"}</div>
+          </div>
           <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16 }}>
             <div style={{ color:"rgba(255,255,255,0.58)",fontSize:14,letterSpacing:"0.08em",fontWeight:200 }}>
               Connected{dayCount > 1 ? " \u00B7 day " + dayCount : ""}
