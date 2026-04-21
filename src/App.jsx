@@ -1151,6 +1151,11 @@ function ResonanceSpace({ user, pair, onDissolve, onPairUpdate }) {
     var onVisible = async function() {
       if (document.visibilityState !== "visible") return;
       try {
+        // Refresh pair in case partner IDs changed (e.g. after account recovery)
+        if (onPairUpdate) {
+          var freshPair = await getPair(user.id);
+          if (freshPair && freshPair.id === pair.id) onPairUpdate(freshPair);
+        }
         // Re-check for pending traces
         if (phR.current === "idle") {
           var pending = await getPendingTrace(user.id);
