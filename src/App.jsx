@@ -1154,7 +1154,10 @@ function ResonanceSpace({ user, pair, onDissolve, onPairUpdate }) {
         // Refresh pair in case partner IDs changed (e.g. after account recovery)
         if (onPairUpdate) {
           var freshPair = await getPair(user.id);
-          if (freshPair && freshPair.id === pair.id) onPairUpdate(freshPair);
+          if (freshPair && freshPair.id === pair.id &&
+              (freshPair.user_a_id !== pair.user_a_id || freshPair.user_b_id !== pair.user_b_id)) {
+            onPairUpdate(freshPair);
+          }
         }
         // Re-check for pending traces
         if (phR.current === "idle") {
