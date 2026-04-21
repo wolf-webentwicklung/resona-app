@@ -659,14 +659,14 @@ export default function App() {
   if (appPhase === "recovery") return <RecoveryUI user={user} onDone={handleRecoveryDone} onBack={function() { setAppPhase("welcome"); }} />;
   if (appPhase === "onboarding") return <Onboarding onDone={handleOnboardingDone} />;
   if (appPhase === "pairing") return <PairSetup onPaired={handlePaired} userId={user ? user.id : null} />;
-  return <ResonanceSpace user={user} pair={pair} onDissolve={handleDissolve} />;
+  return <ResonanceSpace user={user} pair={pair} onDissolve={handleDissolve} onPairUpdate={setPair} />;
 }
 
 
 // ══════════════════════════════════════
 // RESONANCE SPACE — the core experience
 // ══════════════════════════════════════
-function ResonanceSpace({ user, pair, onDissolve }) {
+function ResonanceSpace({ user, pair, onDissolve, onPairUpdate }) {
   var partnerId = getPartnerId(pair, user.id);
 
   // ── State ──
@@ -1076,6 +1076,8 @@ function ResonanceSpace({ user, pair, onDissolve }) {
     var sub = subscribeToPair(pair.id, function(updatedPair) {
       if (updatedPair.status === "dissolved") {
         setDissolved(true);
+      } else if (onPairUpdate) {
+        onPairUpdate(updatedPair);
       }
     });
     return function() { supabase.removeChannel(sub); };
